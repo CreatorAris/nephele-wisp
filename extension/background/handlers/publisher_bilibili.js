@@ -15,10 +15,24 @@
  */
 
 import { stepDwell } from '../humanize.js';
+import { fetchAsset } from '../asset.js';
 
 const CREATOR_STUDIO_URL = 'https://member.bilibili.com/platform/home';
 
 export async function handleBilibiliUploadDraft(session, payload) {
+    // If the request carries an asset (image/video), fetch + verify
+    // it first so we fail fast on transfer errors before spending time
+    // on CDP attach + navigate.
+    let assetInfo = null;
+    if (payload && payload.asset) {
+        const blob = await fetchAsset(payload.asset);
+        assetInfo = {
+            bytes: blob.size,
+            mime: blob.type,
+            sha256_ok: true,  // fetchAsset throws on mismatch
+        };
+    }
+
     await session.navigate(CREATOR_STUDIO_URL);
 
     // Creator studio may redirect to login if the user's session has
@@ -28,6 +42,7 @@ export async function handleBilibiliUploadDraft(session, payload) {
     if (url.includes('passport.bilibili.com') || url.includes('login')) {
         const err = new Error('AUTH_REQUIRED: B站 session expired — please log in manually');
         err.code = 'AUTH_REQUIRED';
+        err.data = { asset_received: assetInfo };
         throw err;
     }
 
@@ -37,6 +52,7 @@ export async function handleBilibiliUploadDraft(session, payload) {
     if (captcha) {
         const err = new Error(`CAPTCHA_REQUIRED: ${captcha.selector}`);
         err.code = 'CAPTCHA_REQUIRED';
+        err.data = { asset_received: assetInfo };
         throw err;
     }
 
@@ -49,7 +65,8 @@ export async function handleBilibiliUploadDraft(session, payload) {
             platform: 'bilibili',
             page_title: title,
             final_url: url,
-            next: 'Full upload flow (image, topic, caption, save-draft) in v0.4 beta.',
+            asset_received: assetInfo,
+            next: 'Full upload flow (drag image, topic, caption, save-draft) in v0.4 beta.',
         },
     };
 }
