@@ -135,6 +135,30 @@ export class CdpSession {
         throw new Error(`DOM_NOT_FOUND: ${selector} (timeout ${timeoutMs}ms)`);
     }
 
+    // Wait until the selector matches AND the element is truly visible —
+    // non-zero bounding box and not display:none. B站's Vue often hydrates
+    // container DOM before the child is styled visible, so
+    // waitForSelector can pass while click() still throws zero-size.
+    async waitForVisible(selector, { timeoutMs = 10000, pollMs = 200 } = {}) {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            const r = await this.evaluate(`
+                (() => {
+                    const el = document.querySelector(${JSON.stringify(selector)});
+                    if (!el) return false;
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width === 0 || rect.height === 0) return false;
+                    const cs = getComputedStyle(el);
+                    if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+                    return true;
+                })()
+            `);
+            if (r.value === true) return;
+            await sleep(pollMs);
+        }
+        throw new Error(`DOM_NOT_FOUND: ${selector} not visible (timeout ${timeoutMs}ms)`);
+    }
+
     async evaluate(expression) {
         const r = await this.send('Runtime.evaluate', {
             expression,
@@ -182,7 +206,23 @@ export class CdpSession {
 
     async click(selector) {
         await preActionDelay();
-        const box = await this._elementBox(selector);
+        // Retry zero-size: Vue/React animations can flicker an element
+        // through rect=(0,0) mid-transition even after it's functionally
+        // mounted. Three tries (≈600ms total) covers all the flicker
+        // windows we've observed on bilibili t.bilibili.com.
+        let box = null, lastErr = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                box = await this._elementBox(selector);
+                break;
+            } catch (e) {
+                lastErr = e;
+                if (!String(e.message).includes('zero-size') && !String(e.message).includes('DOM_NOT_FOUND')) throw e;
+                await sleep(200 + attempt * 150);
+            }
+        }
+        if (!box) throw lastErr;
+
         const bounds = {
             left:   box.x + 1,
             right:  box.x + box.w - 1,
@@ -350,6 +390,90 @@ export class CdpSession {
         });
     }
 
+    // Multi-step approach click — dispatches a trail of mouseMoved
+    // events from an offset point to the target, then press + hold +
+    // release. Some Vue trust gates (B站's topic-item binder is one)
+    // appear to check the INCOMING MOUSE PATH, not just isTrusted: a
+    // teleport-to-target + press fails them, but an arc of intermediate
+    // mouseMoved events with realistic timing passes. Mirrors
+    // Playwright's `page.mouse.move(..., steps=N)` pattern.
+    async elaborateClick(cx, cy) {
+        const offsetX = cx - 40;
+        const offsetY = cy + 40;
+        const lerp = (a, b, t) => a + (b - a) * t;
+        const stepMove = async (fromX, fromY, toX, toY, steps) => {
+            for (let i = 1; i <= steps; i++) {
+                const t = i / steps;
+                await this.send('Input.dispatchMouseEvent', {
+                    type: 'mouseMoved',
+                    x: lerp(fromX, toX, t),
+                    y: lerp(fromY, toY, t),
+                });
+                await sleep(15 + Math.random() * 10);
+            }
+        };
+        await stepMove(offsetX - 30, offsetY + 20, offsetX, offsetY, 3);
+        await sleep(80);
+        await stepMove(offsetX, offsetY, cx, cy, 5);
+        await sleep(120);
+        await this.send('Input.dispatchMouseEvent', {
+            type: 'mousePressed', x: cx, y: cy, button: 'left', clickCount: 1,
+        });
+        await sleep(80);
+        await this.send('Input.dispatchMouseEvent', {
+            type: 'mouseReleased', x: cx, y: cy, button: 'left', clickCount: 1,
+        });
+    }
+
+    // JS click — bypasses coordinate-based mouse simulation. Useful for
+    // buttons that are animating or styled with transform:scale(0)
+    // momentarily — getBoundingClientRect may flicker zero-size mid-
+    // animation even though the element is functionally clickable.
+    // The humanization pipeline applies to *typing* (keystroke cadence
+    // is what anti-bot systems profile); a single JS click is
+    // indistinguishable from coordinate click at the event-handler
+    // level.
+    async jsClick(selector) {
+        await preActionDelay();
+        const ok = await this.evaluateFn((sel) => {
+            const el = document.querySelector(sel);
+            if (!el) return false;
+            el.click();
+            return true;
+        }, [selector]);
+        if (!ok) throw new Error(`DOM_NOT_FOUND: ${selector}`);
+    }
+
+    // Wait for the next Page.fileChooserOpened event on this tab.
+    // Assumes Page.setInterceptFileChooserDialog(true) is already in
+    // effect — enable it up-front (e.g., before navigate) rather than
+    // per-click, otherwise the native OS dialog has a propagation-race
+    // window where it flashes briefly before the intercept kicks in.
+    waitForFileChooser({ timeoutMs = 8000 } = {}) {
+        const tabId = this.tabId;
+        return new Promise((resolve, reject) => {
+            let settled = false;
+            const listener = (src, method, params) => {
+                if (settled || src.tabId !== tabId) return;
+                if (method !== 'Page.fileChooserOpened') return;
+                settled = true;
+                cleanup();
+                resolve(params);
+            };
+            const timer = setTimeout(() => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                reject(new Error(`TIMEOUT: file chooser did not open in ${timeoutMs}ms`));
+            }, timeoutMs);
+            const cleanup = () => {
+                clearTimeout(timer);
+                chrome.debugger.onEvent.removeListener(listener);
+            };
+            chrome.debugger.onEvent.addListener(listener);
+        });
+    }
+
     // ── Captures ──────────────────────────────────────────────────
 
     async screenshot() {
@@ -390,9 +514,15 @@ export class CdpSession {
 // Convenience: create tab → attach → run fn → detach → remove tab
 // ──────────────────────────────────────────────────────────────────
 
-export async function withCdpTab(initialUrl, fn) {
+// If `keepTab: true`, the tab is left open after fn resolves/rejects —
+// only the debugger is detached. Used for publisher flows where the
+// user must visually review the filled draft and hit 发布 manually, so
+// closing the tab would discard their work. Default is to remove the
+// tab (suitable for fire-and-forget data-ingest flows like creator.*
+// and inbox.fetch_*).
+export async function withCdpTab(initialUrl, fn, { keepTab = false, active = false } = {}) {
     const tab = await new Promise((resolve, reject) => {
-        chrome.tabs.create({ url: initialUrl, active: false }, (t) => {
+        chrome.tabs.create({ url: initialUrl, active }, (t) => {
             const err = chrome.runtime.lastError;
             if (err) reject(new Error(`tabs.create: ${err.message}`));
             else resolve(t);
@@ -404,11 +534,13 @@ export async function withCdpTab(initialUrl, fn) {
         return await fn(session, tab);
     } finally {
         try { await session.detach(); } catch (_) { /* noop */ }
-        try {
-            await new Promise((resolve) => {
-                chrome.tabs.remove(tab.id, () => resolve());
-            });
-        } catch (_) { /* noop */ }
+        if (!keepTab) {
+            try {
+                await new Promise((resolve) => {
+                    chrome.tabs.remove(tab.id, () => resolve());
+                });
+            } catch (_) { /* noop */ }
+        }
     }
 }
 

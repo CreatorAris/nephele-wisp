@@ -33,7 +33,7 @@ function standardNormal() {
 
 // 1. Pre-action delay — before any mouse/keyboard dispatch.
 export function preActionDelay() {
-    return randomDelay(200, 800);
+    return randomDelay(60, 200);
 }
 
 // 2. Mouse jitter — Gaussian σ=1.5 px, clamped to element bounds.
@@ -59,15 +59,18 @@ export function clickHold() {
 }
 
 // 4. Typing cadence — per character inter-key delay from
-//    Normal(μ=130ms, σ=40ms), clamped to [60ms, 400ms].
+//    Normal(μ=55ms, σ=18ms), clamped to [30ms, 180ms].
+//    Only relevant when per-char typing is used as a fallback or where
+//    keydown/keyup stream is required (e.g. B站's topic autocomplete
+//    lookup); the common path is batch-insert via execCommand.
 export function typingInterval() {
-    const v = 130 + 40 * standardNormal();
-    return sleep(Math.max(60, Math.min(400, v)));
+    const v = 55 + 18 * standardNormal();
+    return sleep(Math.max(30, Math.min(180, v)));
 }
 
 // 5. Step dwell — between distinct form steps.
 export function stepDwell() {
-    return randomDelay(800, 3000);
+    return randomDelay(200, 600);
 }
 
 // 6. Schedule jitter — offset for scheduled actions.

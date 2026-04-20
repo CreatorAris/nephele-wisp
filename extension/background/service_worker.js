@@ -215,9 +215,9 @@ function dispatchAsync(msg, fn) {
         } catch (e) {
             const code = e.code || classifyCdpError(e);
             error(`${msg.type} failed:`, code, e.message);
-            send(envelope('response', msg.type, {
-                error: { code, message: e.message },
-            }, msg.id));
+            const errObj = { code, message: e.message };
+            if (e.data) errObj.data = e.data;
+            send(envelope('response', msg.type, { error: errObj }, msg.id));
         }
     })();
 }
@@ -225,8 +225,14 @@ function dispatchAsync(msg, fn) {
 async function handlePublisherUploadDraft(payload) {
     const platform = payload.platform_key || '';
     if (platform === 'bilibili') {
-        return await withCdpTab('about:blank', (session) =>
-            handleBilibiliUploadDraft(session, payload));
+        // keepTab + active: user needs the filled draft tab left open
+        // and focused so they can review and hit 发布 manually. Wisp
+        // never publishes for the user — draft_ready is the hard stop.
+        return await withCdpTab(
+            'about:blank',
+            (session) => handleBilibiliUploadDraft(session, payload),
+            { keepTab: true, active: true },
+        );
     }
     const err = new Error(`unsupported platform: ${platform || '(missing)'}`);
     err.code = 'INVALID_PAYLOAD';

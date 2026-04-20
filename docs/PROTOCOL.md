@@ -228,17 +228,22 @@ Every message whose type namespace is `publisher.*`, `inbox.reply`, or
 third-party page — is processed by the extension-side Humanization
 Pipeline. The pipeline wraps all DOM mutations:
 
-1. **Pre-action delay** — `Uniform(200, 800)ms` before any
+1. **Pre-action delay** — `Uniform(60, 200)ms` before any
    mouse/keyboard dispatch.
 2. **Mouse jitter** — target coordinate offset by Gaussian noise
    `σ=1.5px`, clamped to element bounding box.
 3. **Move-then-click** — always dispatch `mouseMoved` before
    `mousePressed`, with 50–150ms gap.
 4. **Typing cadence** — per-character `Input.dispatchKeyEvent` with
-   inter-key delay sampled from `Normal(μ=130ms, σ=40ms)`, clamped to
-   `[60ms, 400ms]`.
+   inter-key delay sampled from `Normal(μ=55ms, σ=18ms)`, clamped to
+   `[30ms, 180ms]`. Handlers SHOULD prefer batch-insert via
+   `document.execCommand('insertText', …)` for plain inputs and
+   contenteditable fields (one InputEvent, not N key events) — the
+   per-char cadence is the fallback for inputs that reject execCommand
+   or for fields whose autocomplete lookup requires a keydown stream
+   (e.g. B站's topic search).
 5. **Step dwell** — between distinct form steps,
-   `Uniform(800, 3000)ms`.
+   `Uniform(200, 600)ms`.
 6. **Schedule jitter** — scheduled actions fire at
    `target_time + Uniform(-15min, +15min)`.
 
