@@ -21,6 +21,23 @@ import {
 
 const DEBUGGER_VERSION = '1.3';
 
+// Minimal map for shortcut keys we actually use (a–z letters + common
+// named keys). CDP's `code` field expects physical-key codes, not the
+// produced character. Extend when a new key is needed.
+function keyToCode(key) {
+    if (key.length === 1) {
+        const c = key.toLowerCase();
+        if (c >= 'a' && c <= 'z') return `Key${c.toUpperCase()}`;
+        if (c >= '0' && c <= '9') return `Digit${c}`;
+    }
+    const named = {
+        Enter: 'Enter', Tab: 'Tab', Escape: 'Escape', Backspace: 'Backspace',
+        Delete: 'Delete', ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown',
+        ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight', Space: 'Space',
+    };
+    return named[key] || key;
+}
+
 // ──────────────────────────────────────────────────────────────────
 // Session
 // ──────────────────────────────────────────────────────────────────
@@ -218,6 +235,102 @@ export class CdpSession {
         await this.send('Input.dispatchKeyEvent', {
             type: 'keyUp', key, code: key,
         });
+    }
+
+    // Press a modified shortcut. Shape: { mods: ['Control'|'Shift'|'Alt'|'Meta'],
+    // key: 'a'|'Enter'|... }. Modifiers are held for the duration of the
+    // primary key. Used for Ctrl+A, Ctrl+Z, etc.
+    async pressShortcut({ mods = [], key }) {
+        const MOD_BITS = { Alt: 1, Control: 2, Meta: 4, Shift: 8 };
+        let modifiers = 0;
+        for (const m of mods) modifiers |= (MOD_BITS[m] || 0);
+        for (const m of mods) {
+            await this.send('Input.dispatchKeyEvent', {
+                type: 'keyDown', key: m, code: m + 'Left',
+            });
+        }
+        await this.send('Input.dispatchKeyEvent', {
+            type: 'rawKeyDown', key, code: keyToCode(key), modifiers,
+        });
+        await sleep(30);
+        await this.send('Input.dispatchKeyEvent', {
+            type: 'keyUp', key, code: keyToCode(key), modifiers,
+        });
+        for (const m of mods.slice().reverse()) {
+            await this.send('Input.dispatchKeyEvent', {
+                type: 'keyUp', key: m, code: m + 'Left',
+            });
+        }
+    }
+
+    // Evaluate a function expression with JSON-serializable args.
+    // Encodes args inline so the function body sees them as locals. Use
+    // this instead of string interpolation to avoid injection bugs and
+    // quote-escaping pain.
+    async evaluateFn(fn, args = []) {
+        const argsJson = JSON.stringify(args);
+        const expr = `(${fn.toString()}).apply(null, ${argsJson})`;
+        const r = await this.evaluate(expr);
+        return r.value;
+    }
+
+    // Wait until at least one of the selectors is present. Returns the
+    // first matching selector. Throws DOM_NOT_FOUND on timeout.
+    async waitForAnySelector(selectors, { timeoutMs = 10000, pollMs = 250 } = {}) {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            for (const sel of selectors) {
+                const r = await this.evaluate(
+                    `!!document.querySelector(${JSON.stringify(sel)})`,
+                );
+                if (r.value === true) return sel;
+            }
+            await sleep(pollMs);
+        }
+        throw new Error(
+            `DOM_NOT_FOUND: none of [${selectors.join(', ')}] (timeout ${timeoutMs}ms)`,
+        );
+    }
+
+    // Register a script to run on every new document load — useful for
+    // patching page globals BEFORE any page script runs (e.g., stubbing
+    // window.showOpenFilePicker before the platform calls it).
+    async addScriptOnNewDocument(source) {
+        const r = await this.send('Page.addScriptToEvaluateOnNewDocument', {
+            source,
+        });
+        return r.identifier;
+    }
+
+    // Type text into a contenteditable element. B站's 动态 editor is a
+    // contenteditable div — plain keyboard dispatch into a focused node
+    // doesn't stick through React/Vue controllers that listen only for
+    // input/compositionend. execCommand('insertText') dispatches a real
+    // InputEvent that frameworks handle correctly.
+    async typeContentEditable(selector, text) {
+        await preActionDelay();
+        await this.click(selector);
+        await sleep(120);
+        // Clear existing content first (select all + delete).
+        await this.pressShortcut({ mods: ['Control'], key: 'a' });
+        await sleep(80);
+        await this.press('Delete');
+        await sleep(100);
+        const ok = await this.evaluateFn((sel, t) => {
+            const el = document.querySelector(sel);
+            if (!el) return false;
+            el.focus();
+            return document.execCommand('insertText', false, t);
+        }, [selector, text]);
+        if (!ok) {
+            // Fallback: per-key dispatch. Slower but Vue/React will at
+            // least see individual input events from the focused node.
+            for (const ch of text) {
+                await this.send('Input.dispatchKeyEvent', { type: 'keyDown', text: ch });
+                await this.send('Input.dispatchKeyEvent', { type: 'keyUp', text: ch });
+                await typingInterval();
+            }
+        }
     }
 
     // ── File inputs (bypass OS dialog) ────────────────────────────
