@@ -171,7 +171,27 @@ function routeRequest(msg) {
             send(envelope('response', 'system.heartbeat', { result: { ok: true } }, msg.id));
             return;
 
-        // Future: publisher.upload_draft, creator.fetch_stats, ...
+        case 'publisher.upload_draft':
+            // v0.4 stub — future work will delegate to the CDP orchestrator
+            // to drive the platform's upload page via chrome.debugger.
+            // Real flow: attach debugger → navigate → file input → type
+            // title/caption → pick topic → screenshot → detach, NEVER
+            // clicking the final publish button.
+            log('publisher.upload_draft STUB', msg.payload);
+            send(envelope('response', 'publisher.upload_draft', {
+                result: {
+                    success: true,
+                    message: '[ext stub] upload_draft received; CDP pipeline not yet wired',
+                    data: {
+                        stub: true,
+                        platform: (msg.payload && msg.payload.platform_key) || '?',
+                    },
+                },
+            }, msg.id));
+            return;
+
+        // Future: creator.fetch_stats, inbox.fetch_comments,
+        // inbox.reply, scheduler.execute, ...
         // Each will live in its own module under background/handlers/
         // once implemented.
 
