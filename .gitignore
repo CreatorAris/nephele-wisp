@@ -1,0 +1,47 @@
+# Node
+node_modules/
+dist/
+build/
+out/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Extension artifacts
+*.crx
+*.pem
+*.zip
+web-ext-artifacts/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# Python (for dev-time NMH adapter experiments)
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Test / coverage
+coverage/
+.nyc_output/
+*.lcov
