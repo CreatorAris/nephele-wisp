@@ -20,6 +20,71 @@ Nephele registers a Native Messaging Host named
 `%NEPHELE_INSTALL%\nephele.exe --nmh`. The extension initiates the
 connection via `chrome.runtime.connectNative("com.arisfusion.nephele_wisp")`.
 
+## Topology
+
+The desktop side of the bridge is split across two processes:
+
+1. **NMH subprocess** — spawned by Chrome/Edge per Native Messaging
+   connection. Owns stdio with the browser. Handles `system.*` requests
+   locally (handshake, heartbeat) without needing any other process.
+2. **Nephele Workshop UI process** — the long-running desktop app.
+   Handles business requests (`publisher.*`, `creator.*`, `inbox.*`,
+   `scheduler.*`). Exposes a local TCP server on `127.0.0.1` using the
+   same framed JSON envelope as the browser wire protocol.
+
+Message flow for a business request:
+
+```
+Browser extension
+    ⇅ stdio (framed JSON)
+NMH subprocess
+    ⇅ TCP 127.0.0.1:<port> (framed JSON, identical envelope)
+Nephele UI process (business handlers)
+```
+
+`system.*` messages terminate at the NMH subprocess — the UI is not
+consulted, so handshake succeeds even if the UI is closed.
+
+Any non-`system.*` request when the UI is absent returns
+`NEPHELE_NOT_RUNNING`. The extension surfaces this as a
+"Nephele Workshop is not running" hint, and the desktop side SHOULD
+NOT auto-retry — the user launches Nephele and retries manually.
+
+### Endpoint discovery
+
+On startup, the Nephele UI process:
+
+1. Binds to `127.0.0.1` on an OS-assigned port.
+2. Writes `%APPDATA%\Nephele\nmh\endpoint.json`:
+   ```json
+   {
+       "host": "127.0.0.1",
+       "port": 54321,
+       "pid": 12345,
+       "started_at": "2026-04-20T12:34:56Z"
+   }
+   ```
+3. Deletes this file on clean exit.
+
+Stale `endpoint.json` from crashes is tolerated — the NMH subprocess
+attempts to connect and treats connection refusal as UI-not-running.
+
+The NMH subprocess reads `endpoint.json` lazily (on the first
+non-`system.*` request) and keeps the TCP connection open for the
+lifetime of the browser connection.
+
+### Namespace gate
+
+NMH enforces which request type namespaces are forwarded:
+
+- Forwarded: `publisher.*`, `creator.*`, `inbox.*`, `scheduler.*`
+- Local (NMH-handled): `system.*`
+- Anything else: `INVALID_PAYLOAD` (rejected at NMH layer — prevents
+  extension/UI schema drift from silently opening new attack surface)
+
+New business namespaces are introduced in a single commit that updates
+this gate, this document's Type Catalog, and the UI-side handler set.
+
 ## Envelope
 
 Every message is a JSON object:
@@ -249,9 +314,10 @@ preflight is permitted.
 | `CAPTCHA_REQUIRED` | Human verification in-page; user action needed |
 | `DOM_NOT_FOUND` | Expected selector absent after retries |
 | `TIMEOUT` | Request exceeded timeout |
-| `INVALID_PAYLOAD` | Schema mismatch or constraint violation |
+| `INVALID_PAYLOAD` | Schema mismatch or unknown request type |
 | `VERSION_INCOMPATIBLE` | Handshake `v` mismatch |
 | `TOKEN_EXPIRED` | Asset-transfer token invalid |
+| `NEPHELE_NOT_RUNNING` | Nephele UI process is not running; business request cannot be served |
 | `INTERNAL` | Unhandled error |
 
 ## Security Boundary
