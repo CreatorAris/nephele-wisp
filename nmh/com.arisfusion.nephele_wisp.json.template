@@ -1,0 +1,10 @@
+{
+  "name": "com.arisfusion.nephele_wisp",
+  "description": "Nephele Wisp native messaging host — bridges the Wisp browser extension to the Nephele Workshop desktop app.",
+  "path": "${NEPHELE_WRAPPER_PATH}",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://${DEV_UNPACKED_ID}/",
+    "chrome-extension://${PROD_WEB_STORE_ID}/"
+  ]
+}

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Nephele Wisp</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <header>
+        <h1>Nephele Wisp</h1>
+        <span id="version" class="muted small">—</span>
+    </header>
+
+    <section>
+        <div class="row">
+            <span class="label">Bridge</span>
+            <span id="status" class="status disconnected">Disconnected</span>
+        </div>
+        <div class="row">
+            <span class="label">Nephele</span>
+            <span id="nephele" class="muted">—</span>
+        </div>
+        <div class="row">
+            <span class="label">Retry attempts</span>
+            <span id="attempts" class="muted">0</span>
+        </div>
+    </section>
+
+    <footer>
+        <button id="reconnect">Reconnect</button>
+        <a href="https://github.com/CreatorAris/nephele-wisp" target="_blank" class="muted small">GitHub</a>
+    </footer>
+
+    <script src="popup.js"></script>
+</body>
+</html>
