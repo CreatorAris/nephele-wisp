@@ -1,13 +1,25 @@
 /*
- * Nephele Wisp — service worker entry point.
+ * Nephele Wisp — service worker entry point (MV3 module).
  *
- * Maintains the Native Messaging connection to the Nephele Workshop
- * desktop app, performs handshake, and routes typed requests to their
- * handlers. Single-file for now; split into modules when the handler
- * set grows beyond v0.4.
+ * Responsibilities:
+ *   1. Own the Native Messaging connection to the Nephele desktop app.
+ *   2. Perform the system.hello handshake on connect.
+ *   3. Route incoming messages:
+ *        response → resolve matching pending Promise from request()
+ *        request  → dispatch via routeRequest()
+ *        event    → handleEvent()
+ *   4. Emit system.heartbeat events every 60s while connected.
+ *   5. Surface connection status to the popup via broadcastStatus().
+ *
+ * Business-request handling (publisher.upload_draft, etc.) delegates
+ * to the CDP orchestrator in ./cdp.js and per-platform handlers under
+ * ./handlers/.
  *
  * Protocol: see docs/PROTOCOL.md (v1).
  */
+
+import { withCdpTab, classifyCdpError } from './cdp.js';
+import { handleBilibiliUploadDraft } from './handlers/publisher_bilibili.js';
 
 const NMH_NAME = 'com.arisfusion.nephele_wisp';
 const PROTOCOL_VERSION = 1;
@@ -40,7 +52,7 @@ function warn(...args) { console.warn('[Wisp]', ...args); }
 function error(...args) { console.error('[Wisp]', ...args); }
 
 // ──────────────────────────────────────────────────────────────────
-// Envelope helpers
+// Envelope
 // ──────────────────────────────────────────────────────────────────
 
 function makeId() {
@@ -128,7 +140,7 @@ function request(type, payload, timeoutMs = 60000) {
 }
 
 // ──────────────────────────────────────────────────────────────────
-// Incoming message routing
+// Incoming routing
 // ──────────────────────────────────────────────────────────────────
 
 function handleIncoming(msg) {
@@ -165,6 +177,10 @@ function handleIncoming(msg) {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────
+// Request dispatch
+// ──────────────────────────────────────────────────────────────────
+
 function routeRequest(msg) {
     switch (msg.type) {
         case 'system.heartbeat':
@@ -172,28 +188,11 @@ function routeRequest(msg) {
             return;
 
         case 'publisher.upload_draft':
-            // v0.4 stub — future work will delegate to the CDP orchestrator
-            // to drive the platform's upload page via chrome.debugger.
-            // Real flow: attach debugger → navigate → file input → type
-            // title/caption → pick topic → screenshot → detach, NEVER
-            // clicking the final publish button.
-            log('publisher.upload_draft STUB', msg.payload);
-            send(envelope('response', 'publisher.upload_draft', {
-                result: {
-                    success: true,
-                    message: '[ext stub] upload_draft received; CDP pipeline not yet wired',
-                    data: {
-                        stub: true,
-                        platform: (msg.payload && msg.payload.platform_key) || '?',
-                    },
-                },
-            }, msg.id));
+            dispatchAsync(msg, handlePublisherUploadDraft);
             return;
 
         // Future: creator.fetch_stats, inbox.fetch_comments,
         // inbox.reply, scheduler.execute, ...
-        // Each will live in its own module under background/handlers/
-        // once implemented.
 
         default:
             send(envelope(
@@ -205,8 +204,37 @@ function routeRequest(msg) {
     }
 }
 
+// Async handler wrapper: runs fn(payload) → { result } or { error };
+// writes framed response back. Handlers MUST throw on failure, and
+// SHOULD attach `.code` to the Error for protocol error-code mapping.
+function dispatchAsync(msg, fn) {
+    (async () => {
+        try {
+            const result = await fn(msg.payload || {});
+            send(envelope('response', msg.type, { result }, msg.id));
+        } catch (e) {
+            const code = e.code || classifyCdpError(e);
+            error(`${msg.type} failed:`, code, e.message);
+            send(envelope('response', msg.type, {
+                error: { code, message: e.message },
+            }, msg.id));
+        }
+    })();
+}
+
+async function handlePublisherUploadDraft(payload) {
+    const platform = payload.platform_key || '';
+    if (platform === 'bilibili') {
+        return await withCdpTab('about:blank', (session) =>
+            handleBilibiliUploadDraft(session, payload));
+    }
+    const err = new Error(`unsupported platform: ${platform || '(missing)'}`);
+    err.code = 'INVALID_PAYLOAD';
+    throw err;
+}
+
 function handleEvent(msg) {
-    // No event types from Nephele are expected in v1; log for diagnostics.
+    // No ext-consumed events in v1. Log for diagnostics.
     log('event (ignored)', msg.type, msg.payload);
 }
 
@@ -246,7 +274,7 @@ async function performHandshake() {
 }
 
 // ──────────────────────────────────────────────────────────────────
-// Heartbeat (client → host)
+// Heartbeat
 // ──────────────────────────────────────────────────────────────────
 
 function startHeartbeat() {
@@ -323,7 +351,7 @@ async function disconnect(reason) {
 
 function broadcastStatus() {
     const now = Date.now();
-    if (now - lastStatusBroadcast < 100) return;  // throttle
+    if (now - lastStatusBroadcast < 100) return;
     lastStatusBroadcast = now;
     chrome.runtime.sendMessage({
         kind: 'internal',
@@ -355,7 +383,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // ──────────────────────────────────────────────────────────────────
-// Lifecycle entry points
+// Lifecycle
 // ──────────────────────────────────────────────────────────────────
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -368,6 +396,7 @@ chrome.runtime.onStartup.addListener(() => {
     connect();
 });
 
-// Also connect on service-worker wakeup (MV3 SWs can be spawned on
-// events like alarms or extension messaging).
+// Also connect on SW wakeup — MV3 service workers may be started for
+// various events (alarms, messages, installed) and we want the NMH
+// connection up whenever the SW is alive.
 connect();
