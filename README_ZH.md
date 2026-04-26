@@ -70,3 +70,4 @@ MIT，见 [LICENSE](LICENSE)。可自由 fork、审计、重新打包。
 
 - [nephele-core-audit](https://github.com/CreatorAris/nephele-core-audit) —— Nephele Workshop 客户端的可审计代码子集（rights / packer / validator）
 - [nephele-verify](https://github.com/CreatorAris/nephele-verify) —— `.nep` 存证文件的独立验证页
+- [nephele-remote](https://github.com/CreatorAris/nephele-remote) —— 移动伴侣（Expo / React Native 应用）

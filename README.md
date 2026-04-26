@@ -70,3 +70,4 @@ MIT, see [LICENSE](LICENSE). Free to fork, audit, or repackage.
 
 - [nephele-core-audit](https://github.com/CreatorAris/nephele-core-audit) — auditable subset of the Nephele Workshop client (rights / packer / validator)
 - [nephele-verify](https://github.com/CreatorAris/nephele-verify) — independent verification page for `.nep` evidence files
+- [nephele-remote](https://github.com/CreatorAris/nephele-remote) — mobile companion (Expo / React Native app)
