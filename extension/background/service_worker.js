@@ -20,6 +20,12 @@
 
 import { withCdpTab, classifyCdpError } from './cdp.js';
 import { handleBilibiliUploadDraft } from './handlers/publisher_bilibili.js';
+import { handleXiaohongshuUploadDraft } from './handlers/publisher_xiaohongshu.js';
+import { handleWeiboUploadDraft } from './handlers/publisher_weibo.js';
+import { handleDouyinUploadDraft } from './handlers/publisher_douyin.js';
+import { handlePixivUploadDraft } from './handlers/publisher_pixiv.js';
+import { handleTwitterUploadDraft } from './handlers/publisher_twitter.js';
+import { handleArtstationUploadDraft } from './handlers/publisher_artstation.js';
 
 const NMH_NAME = 'com.arisfusion.nephele_wisp';
 const PROTOCOL_VERSION = 1;
@@ -224,19 +230,30 @@ function dispatchAsync(msg, fn) {
 
 async function handlePublisherUploadDraft(payload) {
     const platform = payload.platform_key || '';
-    if (platform === 'bilibili') {
-        // keepTab + active: user needs the filled draft tab left open
-        // and focused so they can review and hit 发布 manually. Wisp
-        // never publishes for the user — draft_ready is the hard stop.
-        return await withCdpTab(
-            'about:blank',
-            (session) => handleBilibiliUploadDraft(session, payload),
-            { keepTab: true, active: true },
-        );
+    // keepTab + active: user needs the filled draft tab left open and
+    // focused so they can review and hit publish manually. Wisp never
+    // publishes for the user — draft_ready is the hard stop, the same
+    // contract for every platform.
+    const dispatchTable = {
+        bilibili: handleBilibiliUploadDraft,
+        xiaohongshu: handleXiaohongshuUploadDraft,
+        weibo: handleWeiboUploadDraft,
+        douyin: handleDouyinUploadDraft,
+        pixiv: handlePixivUploadDraft,
+        twitter: handleTwitterUploadDraft,
+        artstation: handleArtstationUploadDraft,
+    };
+    const handler = dispatchTable[platform];
+    if (!handler) {
+        const err = new Error(`unsupported platform: ${platform || '(missing)'}`);
+        err.code = 'INVALID_PAYLOAD';
+        throw err;
     }
-    const err = new Error(`unsupported platform: ${platform || '(missing)'}`);
-    err.code = 'INVALID_PAYLOAD';
-    throw err;
+    return await withCdpTab(
+        'about:blank',
+        (session) => handler(session, payload),
+        { keepTab: true, active: true },
+    );
 }
 
 function handleEvent(msg) {

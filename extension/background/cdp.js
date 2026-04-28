@@ -59,11 +59,28 @@ export class CdpSession {
             });
         });
         this.attached = true;
+        // Auto-clear attached flag if the debugger gets detached out
+        // from under us (e.g. cross-origin navigation, target swap on
+        // some platforms). Subsequent ops will see attached=false and
+        // can re-attach via _ensureAttached().
+        if (!this._detachListenerInstalled) {
+            this._detachListenerInstalled = true;
+            chrome.debugger.onDetach.addListener((src, _reason) => {
+                if (src && src.tabId === this.tabId) {
+                    this.attached = false;
+                }
+            });
+        }
         // Enable the domains we use. Order matters for DOM.enable —
         // must be on before DOM.querySelector calls.
         await this.send('Page.enable');
         await this.send('DOM.enable');
         await this.send('Runtime.enable');
+    }
+
+    async _ensureAttached() {
+        if (this.attached) return;
+        await this.attach();
     }
 
     async detach() {
@@ -76,15 +93,30 @@ export class CdpSession {
         this.attached = false;
     }
 
-    // Raw CDP command. Throws on error.
-    send(method, params = {}) {
-        return new Promise((resolve, reject) => {
+    // Raw CDP command. Throws on error. Auto-reattaches once on
+    // "Detached" — cross-origin navigation (e.g. anonymous publisher
+    // URL → sso/passport login redirect) detaches the debugger
+    // session; the tab is still alive and we should pick back up
+    // rather than crash with INTERNAL.
+    async send(method, params = {}, { _retry = false } = {}) {
+        const exec = () => new Promise((resolve, reject) => {
             chrome.debugger.sendCommand(this.target, method, params, (result) => {
                 const err = chrome.runtime.lastError;
                 if (err) reject(new Error(`${method}: ${err.message}`));
                 else resolve(result);
             });
         });
+        try {
+            return await exec();
+        } catch (e) {
+            const msg = (e && e.message) || '';
+            if (!_retry && /Detached|Cannot find context|debugger is not attached/i.test(msg)) {
+                this.attached = false;
+                await this._ensureAttached();
+                return await exec();
+            }
+            throw e;
+        }
     }
 
     // ── Navigation ────────────────────────────────────────────────

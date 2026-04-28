@@ -22,6 +22,14 @@
   ],
   "host_permissions": [
     "*://*.bilibili.com/*",
+    "*://*.xiaohongshu.com/*",
+    "*://*.weibo.com/*",
+    "*://*.weibo.cn/*",
+    "*://*.douyin.com/*",
+    "*://*.pixiv.net/*",
+    "*://*.x.com/*",
+    "*://*.twitter.com/*",
+    "*://*.artstation.com/*",
     "http://127.0.0.1/*"
   ],
   "minimum_chrome_version": "116"

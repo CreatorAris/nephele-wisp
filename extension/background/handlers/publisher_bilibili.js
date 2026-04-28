@@ -83,23 +83,35 @@ export async function handleBilibiliUploadDraft(session, payload) {
     }
 
     // ── Step 0: fetch for sha256 verify + pull local_path for CDP
-    //           file delivery. fetchAsset throws on integrity failure. ──
-    let localPath = null;
-    let assetInfo = null;
-    if (payload.asset) {
-        const blob = await fetchAsset(payload.asset);
-        localPath = payload.asset.local_path || null;
-        if (!localPath) {
+    //           file delivery. assets[] preferred, falls back to legacy
+    //           single asset. fetchAsset throws on integrity failure.
+    //           B站 dynamic posts cap at 9 images. ──
+    const rawAssets = Array.isArray(payload.assets) && payload.assets.length
+        ? payload.assets
+        : (payload.asset ? [payload.asset] : []);
+    if (rawAssets.length > 9) {
+        const err = new Error(`INVALID_PAYLOAD: bilibili dynamic accepts ≤ 9 images, got ${rawAssets.length}`);
+        err.code = 'INVALID_PAYLOAD';
+        throw err;
+    }
+    const localPaths = [];
+    const assetsInfo = [];
+    for (const a of rawAssets) {
+        const blob = await fetchAsset(a);
+        if (!a.local_path) {
             const err = new Error('INVALID_PAYLOAD: asset.local_path required');
             err.code = 'INVALID_PAYLOAD';
             throw err;
         }
-        assetInfo = {
+        localPaths.push(a.local_path);
+        assetsInfo.push({
             bytes: blob.size,
-            mime: blob.type || payload.asset.mime || 'image/png',
+            mime: blob.type || a.mime || 'image/png',
             sha256_ok: true,
-        };
+        });
     }
+    const hasImages = localPaths.length > 0;
+    const legacyAssetInfo = assetsInfo[0] || null;
 
     // ── Step 1: disable FSA via addScriptToEvaluateOnNewDocument BEFORE
     //           navigate. Must be in place before B站's bundle captures
@@ -108,7 +120,7 @@ export async function handleBilibiliUploadDraft(session, payload) {
     //           suppressed — enabling it per-click has a renderer-side
     //           propagation race where the dialog flashes briefly
     //           before intercept kicks in. ──
-    if (localPath) {
+    if (hasImages) {
         await session.addScriptOnNewDocument(FSA_DISABLE_STUB);
         await session.send('Page.setInterceptFileChooserDialog', { enabled: true });
     }
@@ -119,14 +131,14 @@ export async function handleBilibiliUploadDraft(session, payload) {
     if (/passport\.bilibili\.com|\/login(\?|$)/.test(url)) {
         const err = new Error('AUTH_REQUIRED: B站 session expired — please log in manually');
         err.code = 'AUTH_REQUIRED';
-        err.data = { asset_received: assetInfo, final_url: url };
+        err.data = { asset_received: legacyAssetInfo, assets_received: assetsInfo, final_url: url };
         throw err;
     }
     const captcha = await session.detectCaptcha();
     if (captcha) {
         const err = new Error(`CAPTCHA_REQUIRED: ${captcha.selector}`);
         err.code = 'CAPTCHA_REQUIRED';
-        err.data = { asset_received: assetInfo };
+        err.data = { asset_received: legacyAssetInfo, assets_received: assetsInfo };
         throw err;
     }
 
@@ -135,7 +147,7 @@ export async function handleBilibiliUploadDraft(session, payload) {
     } catch (e) {
         const err = new Error('AUTH_REQUIRED: compose UI not rendered — user may not be signed in');
         err.code = 'AUTH_REQUIRED';
-        err.data = { asset_received: assetInfo, final_url: url };
+        err.data = { asset_received: legacyAssetInfo, assets_received: assetsInfo, final_url: url };
         throw err;
     }
     await stepDwell();
@@ -149,9 +161,9 @@ export async function handleBilibiliUploadDraft(session, payload) {
         await sleep(300);
     }
 
-    if (localPath) {
-        await uploadImage(session, localPath);
-        await waitForUploadComplete(session);
+    if (hasImages) {
+        await uploadImages(session, localPaths);
+        await waitForUploadComplete(session, { expectedCount: localPaths.length });
     }
 
     let topicNote = '';
@@ -182,10 +194,12 @@ export async function handleBilibiliUploadDraft(session, payload) {
             platform: 'bilibili',
             page_title: pageTitle,
             final_url: await session.getUrl(),
-            asset_received: assetInfo,
+            asset_received: legacyAssetInfo,
+            assets_received: assetsInfo,
             title_filled: Boolean(title),
             caption_filled: Boolean(caption),
-            image_uploaded: Boolean(assetInfo),
+            image_uploaded: hasImages,
+            images_uploaded: localPaths.length,
             topic_note: topicNote,
             publish_button_enabled: publishEnabled,
         },
@@ -219,7 +233,7 @@ async function typeIntoInput(session, selector, text) {
     }
 }
 
-async function uploadImage(session, localPath) {
+async function uploadImages(session, localPaths) {
     // Activate the pic tool tab if not already active.
     await session.waitForSelector(PIC_TOOL_SELECTOR, { timeoutMs: 5000 });
     const picActive = await session.evaluateFn((sel) => {
@@ -236,7 +250,9 @@ async function uploadImage(session, localPath) {
     // Intercept was enabled up-front at handler start (before navigate),
     // so the native OS dialog is already fully suppressed. We only need
     // to set up the one-shot listener for the next fileChooserOpened
-    // event, then click.
+    // event, then click. B站's <input type="file"> has the `multiple`
+    // attribute, so a single setFileInputFiles call with N paths uploads
+    // all images in one go.
     const chooserPromise = session.waitForFileChooser({ timeoutMs: 8000 });
 
     // Coord click — trusted user gesture is REQUIRED. Chrome blocks
@@ -249,37 +265,46 @@ async function uploadImage(session, localPath) {
     const chooser = await chooserPromise;
     await session.send('DOM.setFileInputFiles', {
         backendNodeId: chooser.backendNodeId,
-        files: [localPath],
+        files: localPaths,
     });
 }
 
-async function waitForUploadComplete(session, { timeoutMs = 25000 } = {}) {
+async function waitForUploadComplete(session, { timeoutMs = 25000, expectedCount = 1 } = {}) {
+    // Multi-image: poll until we have ≥ expectedCount visible .success
+    // tiles. B站 renders one tile per image and flips each to .success
+    // independently as its server-side processing completes. We wait
+    // for ALL of them so the publish button gates on the full set.
     const deadline = Date.now() + timeoutMs;
-    let imgOk = false;
+    let allOk = false;
     while (Date.now() < deadline) {
         const state = await session.evaluateFn((sucSel, failSel, btnSel) => {
-            const success = document.querySelector(sucSel);
-            const failed = document.querySelector(failSel);
+            const successTiles = document.querySelectorAll(sucSel);
+            const failedTiles = document.querySelectorAll(failSel);
             const btn = document.querySelector(btnSel);
+            const visibleCount = (nodes) => {
+                let n = 0;
+                for (const el of nodes) if (el.offsetParent !== null) n++;
+                return n;
+            };
             return {
-                success: !!(success && success.offsetParent !== null),
-                failed: !!(failed && failed.offsetParent !== null),
+                successCount: visibleCount(successTiles),
+                failedCount: visibleCount(failedTiles),
                 publishEnabled: btn
                     ? !(btn.className || '').includes('disabled')
                     : false,
             };
         }, [UPLOAD_SUCCESS_SELECTOR, UPLOAD_FAILED_SELECTOR, PUBLISH_BTN_SELECTOR]);
-        if (state.failed) {
-            throw new Error('B站拒绝上传该图片（服务端标记失败）');
+        if (state.failedCount > 0) {
+            throw new Error(`B站拒绝上传图片（${state.failedCount} 张服务端标记失败）`);
         }
-        if (!imgOk && state.success) imgOk = true;
-        if (imgOk && state.publishEnabled) {
+        if (!allOk && state.successCount >= expectedCount) allOk = true;
+        if (allOk && state.publishEnabled) {
             await sleep(300);
             return;
         }
         await sleep(300);
     }
-    if (!imgOk) {
+    if (!allOk) {
         const diag = await session.evaluateFn(() => {
             const all = document.querySelectorAll('.bili-pics-uploader__item');
             const tiles = [];

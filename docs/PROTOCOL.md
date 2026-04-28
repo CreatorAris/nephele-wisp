@@ -170,7 +170,7 @@ Missing three consecutive heartbeats triggers reconnect.
 
 ### v1 — ships with Nephele v0.4 beta
 
-Scope: B站 draft upload.
+Scope: image-post draft upload across B站 / 小红书 / 微博.
 
 | Type | Direction | Purpose |
 |---|---|---|
@@ -182,6 +182,52 @@ Scope: B站 draft upload.
 | `publisher.captcha_detected` | ext → neph | pause, user action required |
 | `publisher.captcha_resolved` | neph → ext | user confirmed, resume |
 | `publisher.draft_ready` | ext → neph | draft saved, awaiting user publish |
+
+#### `publisher.upload_draft` payload
+
+```json
+{
+    "platform_key": "bilibili" | "xiaohongshu" | "weibo" | "douyin"
+                  | "pixiv" | "twitter" | "artstation",
+    "title": "可选,某些平台支持",
+    "caption": "正文文案",
+    "topic": "可选,单话题名(去掉#包裹)",
+    "asset":  { /* legacy single-image, see Large Binary Transfer */ },
+    "assets": [ /* preferred: array of asset descriptors, multi-image */ ]
+}
+```
+
+Handlers accept `assets[]` (preferred) OR legacy single `asset`. A handler
+that gets both MUST treat `assets` as authoritative. Per-platform image
+count caps:
+
+| Platform | Min | Max | Notes |
+|---|---|---|---|
+| bilibili | 0 | 9 | dynamic post; 0 = text-only (caption required) |
+| xiaohongshu | 1 | 18 | 图文笔记必须有图 |
+| weibo | 0 | 9 | text-only allowed if caption present |
+| douyin | 1 | 35 | 抖音图文 必须有图 |
+| pixiv | 1 | 200 | illust upload; multi-page work allowed |
+| twitter | 0 | 4 | tweet; 0 = text-only |
+| artstation | 1 | 100 | artwork; gallery + cover required |
+
+Handler returns `result.data` shape (additive across platforms):
+
+```json
+{
+    "platform": "<platform_key>",
+    "page_title": "...",
+    "final_url": "...",
+    "asset_received": { "bytes": ..., "mime": "...", "sha256_ok": true } | null,
+    "assets_received": [ /* same shape per asset; present when assets[] used */ ],
+    "title_filled": true|false,
+    "caption_filled": true|false,
+    "image_uploaded": true|false,
+    "images_uploaded": <int>,
+    "topic_note": "topic_bound:X | topic_likely_bound:X | topic_search_failed:X:reason | (empty)",
+    "publish_button_enabled": true|false
+}
+```
 
 ### v2 — ships with Nephele v0.4.1
 
@@ -323,6 +369,7 @@ preflight is permitted.
 | `VERSION_INCOMPATIBLE` | Handshake `v` mismatch |
 | `TOKEN_EXPIRED` | Asset-transfer token invalid |
 | `NEPHELE_NOT_RUNNING` | Nephele UI process is not running; business request cannot be served |
+| `ACTION_REQUIRED` | Platform requires the user to take a manual action (e.g. dismiss a one-time ToS / first-post agreement modal) before automation can proceed. Tab is left open; user resolves and retries. |
 | `INTERNAL` | Unhandled error |
 
 ## Security Boundary
