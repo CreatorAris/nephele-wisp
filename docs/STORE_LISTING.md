@@ -156,8 +156,9 @@ Before clicking submit:
 
 - [ ] Icons 16/32/48/128 in `extension/icons/` (final art, not the
       placeholder copy of the desktop avatar)
-- [ ] Privacy policy URL hosted at <https://arisfusion.com/wisp/privacy>
-      (or wherever final URL is) and reachable
+- [x] Privacy policy URL: <https://nephele.arisfusion.com/wisp/privacy>
+      (deployed via CF Pages)
+- [x] Permissions justification URL: <https://nephele.arisfusion.com/wisp/permissions>
 - [ ] Screenshots produced (5 PNG, 1280×800)
 - [ ] Promo tile produced (1 PNG, 440×280)
 - [ ] manifest.json `version` bumped if shipping update
