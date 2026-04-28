@@ -251,7 +251,23 @@ async function handlePublisherUploadDraft(payload) {
     }
     return await withCdpTab(
         'about:blank',
-        (session) => handler(session, payload),
+        async (session) => {
+            const result = await handler(session, payload);
+            // Optional CDP screenshot capture for store-listing
+            // automation. Wrapped here (not per-handler) so all 7
+            // platform handlers stay focused on their own DOM logic.
+            // Only fires on success path; the session is still
+            // attached at this point (withCdpTab detaches afterwards).
+            if (payload && payload.capture_screenshot
+                && result && typeof result === 'object' && result.data) {
+                try {
+                    result.data.screenshot_b64 = await session.screenshot();
+                } catch (e) {
+                    result.data.screenshot_error = (e && e.message) || String(e);
+                }
+            }
+            return result;
+        },
         { keepTab: true, active: true },
     );
 }
