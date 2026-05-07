@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Nephele Wisp — Store Tile</title>
+<!--
+  1280x800 promotional tile for Chrome Web Store / Edge Add-ons.
+
+  Render with:
+    powershell -File store/render_poster.ps1
+  or:
+    msedge.exe --headless=new --hide-scrollbars `
+               --window-size=1280,800 `
+               --screenshot=store/poster.png `
+               file:///E:/nephele-wisp/store/poster.html
+
+  Design notes:
+  - Pure HTML/CSS, no external assets, no network — Web Store reviewers
+    sometimes preview the listing assets offline.
+  - Copy is taken verbatim from docs/STORE_LISTING.md so the listing,
+    the doc, and the tile stay in sync. Don't ad-lib marketing here.
+  - Platforms shown by name only (no third-party logos / trademarks).
+-->
+<style>
+  :root {
+    --fairy-purple: #9B7BDA;
+    --fairy-purple-deep: #7A55C4;
+    --fairy-purple-soft: #E2D5F4;
+    --teal: #62B6CB;
+    --warm-bg: #F8F4FF;
+    --card-bg: #FFFFFF;
+    --text-primary: #2A1F45;
+    --text-secondary: #5C4D78;
+    --text-tertiary: #9388A8;
+    --border: #ECE4F7;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100vw;
+    height: 100vh;
+    min-width: 1280px;
+    min-height: 800px;
+    overflow: hidden;
+    font-family: "Segoe UI", -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: var(--text-primary);
+    background:
+      radial-gradient(circle at 18% 22%, rgba(155, 123, 218, 0.22), transparent 55%),
+      radial-gradient(circle at 82% 78%, rgba(98, 182, 203, 0.20), transparent 55%),
+      linear-gradient(135deg, #F4ECFF 0%, #FFF5F8 50%, #ECF8FB 100%);
+  }
+
+  .stage {
+    position: relative;
+    width: 1280px;
+    height: 800px;
+    padding: 64px 96px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+
+  /* soft sparkle dots — purely decorative, hand-placed */
+  .stage::before,
+  .stage::after {
+    content: "";
+    position: absolute;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255, 255, 255, 0.85), transparent 70%);
+    pointer-events: none;
+  }
+  .stage::before { top: 110px; right: 240px; width: 6px;  height: 6px; }
+  .stage::after  { bottom: 180px; left: 260px; width: 4px; height: 4px; }
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    margin-bottom: 56px;
+  }
+  .brand { text-align: left; }
+
+  .mark {
+    width: 56px; height: 56px;
+    border-radius: 14px;
+    box-shadow: 0 8px 24px rgba(122, 85, 196, 0.30);
+    display: block;
+    object-fit: cover;
+  }
+
+  .brand {
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .brand-name {
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+  .brand-sub {
+    font-size: 13px;
+    color: var(--text-tertiary);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .hero {
+    max-width: 920px;
+    margin-bottom: 44px;
+  }
+  .hero h1 {
+    font-size: 72px;
+    font-weight: 700;
+    line-height: 1.12;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+    margin-bottom: 18px;
+  }
+  .hero h1 .accent {
+    background: linear-gradient(135deg, var(--fairy-purple) 0%, var(--teal) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .hero h2 {
+    font-size: 22px;
+    font-weight: 400;
+    color: var(--text-tertiary);
+    letter-spacing: 0.02em;
+    margin-bottom: 28px;
+  }
+  .hero p {
+    font-size: 20px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+    max-width: 800px;
+    margin: 0 auto;
+  }
+
+  .platforms {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+    max-width: 940px;
+    margin-bottom: 48px;
+  }
+  .pill {
+    padding: 9px 18px;
+    border-radius: 999px;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    box-shadow: 0 2px 8px rgba(122, 85, 196, 0.06);
+  }
+  .pill.dot::before {
+    content: "";
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--fairy-purple);
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+
+  footer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+    margin-top: auto;
+  }
+
+  .promise {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 24px;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: 0 4px 14px rgba(122, 85, 196, 0.08);
+    max-width: 920px;
+    text-align: left;
+  }
+  .promise-mark {
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    background: rgba(98, 182, 203, 0.16);
+    color: var(--teal);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 700;
+    flex-shrink: 0;
+  }
+  .promise-text {
+    font-size: 14px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+  }
+  .promise-text strong {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  .meta {
+    text-align: center;
+    color: var(--text-tertiary);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+  }
+  .meta .repo {
+    color: var(--fairy-purple);
+    font-weight: 500;
+    margin-left: 8px;
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <header>
+    <img class="mark" src="icon.png" alt="">
+    <div class="brand">
+      <div class="brand-name">Nephele Wisp</div>
+      <div class="brand-sub">Browser companion for Nephele Workshop</div>
+    </div>
+  </header>
+
+  <section class="hero">
+    <h1>
+      为<span class="accent">拒绝被替代</span>的画师而造
+    </h1>
+    <h2>Built for artists who refuse to be replaced.</h2>
+    <p>
+      Wisp 把桌面端要发的内容（图片、标题、文案、话题）填进
+      你浏览器里已登录的发布表单——然后停在「草稿已就绪」，
+      由你检查后手动点发布。
+    </p>
+  </section>
+
+  <div class="platforms">
+    <span class="pill dot">Bilibili</span>
+    <span class="pill dot">小红书</span>
+    <span class="pill dot">微博</span>
+    <span class="pill dot">抖音</span>
+    <span class="pill dot">Pixiv</span>
+    <span class="pill dot">Twitter / X</span>
+    <span class="pill dot">ArtStation</span>
+  </div>
+
+  <footer>
+    <div class="promise">
+      <div class="promise-mark">✓</div>
+      <div class="promise-text">
+        <strong>Wisp 永远停在草稿。</strong>
+        不点发布 · 不绕验证码 · 不自动点赞关注 · 数据只在本机流转，不发任何外部服务器。
+      </div>
+    </div>
+    <div class="meta">
+      MIT 开源 · v0.4.2<br>
+      <span class="repo">github.com/CreatorAris/nephele-wisp</span>
+    </div>
+  </footer>
+
+</div>
+</body>
+</html>

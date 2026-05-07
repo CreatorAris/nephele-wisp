@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Nephele Wisp — Marquee Promo Tile</title>
+<!--
+  1400x560 marquee promotional tile (English).
+
+  Render with:
+    & "C:\actions-runner\ci_env\Scripts\python.exe" `
+        store/render_poster.py marquee
+
+  Aspect ratio is 2.5:1 — left/right split layout.
+  Chinese version preserved at marquee_zh.html.
+-->
+<style>
+  :root {
+    --fairy-purple: #9B7BDA;
+    --fairy-purple-deep: #7A55C4;
+    --teal: #62B6CB;
+    --card-bg: #FFFFFF;
+    --text-primary: #2A1F45;
+    --text-secondary: #5C4D78;
+    --text-tertiary: #9388A8;
+    --border: #ECE4F7;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100vw;
+    height: 100vh;
+    min-width: 1400px;
+    min-height: 560px;
+    overflow: hidden;
+    font-family: "Segoe UI", -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: var(--text-primary);
+    background:
+      radial-gradient(circle at 12% 30%, rgba(155, 123, 218, 0.24), transparent 55%),
+      radial-gradient(circle at 88% 75%, rgba(98, 182, 203, 0.22), transparent 55%),
+      linear-gradient(135deg, #F4ECFF 0%, #FFF5F8 50%, #ECF8FB 100%);
+  }
+
+  .stage {
+    position: relative;
+    width: 1400px;
+    height: 560px;
+    padding: 64px 80px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 64px;
+    align-items: center;
+  }
+
+  /* sparkle dots — purely decorative */
+  .stage::before,
+  .stage::after {
+    content: "";
+    position: absolute;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255, 255, 255, 0.85), transparent 70%);
+    pointer-events: none;
+  }
+  .stage::before { top: 80px;  right: 200px; width: 6px; height: 6px; }
+  .stage::after  { bottom: 100px; left: 220px; width: 4px; height: 4px; }
+
+  /* --- LEFT: brand + slogan --- */
+  .left {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .mark {
+    width: 52px; height: 52px;
+    border-radius: 13px;
+    box-shadow: 0 8px 24px rgba(122, 85, 196, 0.30);
+    display: block;
+  }
+  .brand-name {
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+  .brand-sub {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+
+  h1 {
+    font-size: 50px;
+    font-weight: 700;
+    line-height: 1.14;
+    letter-spacing: -0.02em;
+  }
+  h1 .accent {
+    background: linear-gradient(135deg, var(--fairy-purple) 0%, var(--teal) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .lede {
+    font-size: 15px;
+    font-weight: 400;
+    color: var(--text-secondary);
+    line-height: 1.55;
+    max-width: 540px;
+  }
+
+  /* --- RIGHT: platforms + promise --- */
+  .right {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    align-items: flex-start;
+  }
+  .right-label {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+
+  .platforms {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 9px;
+    max-width: 560px;
+  }
+  .pill {
+    padding: 8px 16px;
+    border-radius: 999px;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    box-shadow: 0 2px 8px rgba(122, 85, 196, 0.06);
+  }
+  .pill.dot::before {
+    content: "";
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--fairy-purple);
+    margin-right: 7px;
+    vertical-align: middle;
+  }
+
+  .promise {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 20px;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 4px 14px rgba(122, 85, 196, 0.08);
+    max-width: 560px;
+  }
+  .promise-mark {
+    width: 28px; height: 28px;
+    border-radius: 7px;
+    background: rgba(98, 182, 203, 0.16);
+    color: var(--teal);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; font-weight: 700;
+    flex-shrink: 0;
+  }
+  .promise-text {
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+  }
+  .promise-text strong {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  /* meta strip absolute bottom-right */
+  .meta {
+    position: absolute;
+    right: 80px;
+    bottom: 28px;
+    color: var(--text-tertiary);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+  }
+  .meta .repo {
+    color: var(--fairy-purple);
+    font-weight: 500;
+    margin-left: 8px;
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <div class="left">
+    <header>
+      <img class="mark" src="icon.png" alt="">
+      <div>
+        <div class="brand-name">Nephele Wisp</div>
+        <div class="brand-sub">Browser companion for Nephele Workshop</div>
+      </div>
+    </header>
+
+    <h1>
+      Built for artists who<br>
+      <span class="accent">refuse to be replaced.</span>
+    </h1>
+    <div class="lede">
+      Fills upload forms on sites you're already logged into &mdash;
+      then stops for review.
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="right-label">Supported &middot; 7 platforms</div>
+    <div class="platforms">
+      <span class="pill dot">Bilibili</span>
+      <span class="pill dot">Xiaohongshu</span>
+      <span class="pill dot">Weibo</span>
+      <span class="pill dot">Douyin</span>
+      <span class="pill dot">Pixiv</span>
+      <span class="pill dot">Twitter / X</span>
+      <span class="pill dot">ArtStation</span>
+    </div>
+
+    <div class="promise">
+      <div class="promise-mark">&#10003;</div>
+      <div class="promise-text">
+        <strong>Always stops at &ldquo;draft ready.&rdquo;</strong>
+        No auto-publish &middot; no captcha bypass &middot; data stays local.
+      </div>
+    </div>
+  </div>
+
+  <div class="meta">
+    MIT &middot; v0.4.2<span class="repo">github.com/CreatorAris/nephele-wisp</span>
+  </div>
+</div>
+</body>
+</html>

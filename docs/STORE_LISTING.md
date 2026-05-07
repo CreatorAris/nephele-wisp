@@ -132,12 +132,24 @@ purple gradient background; text "Nephele Wisp · Browser companion".
 | debugger | Drives upload forms via Chrome DevTools Protocol on tabs the extension opens itself; Chrome displays a persistent yellow notification bar while attached. |
 | tabs | Used to open the automation tab and close it on cleanup. |
 | scripting | Required for `Page.addScriptToEvaluateOnNewDocument` patches needed before navigating to certain platforms. |
+| alarms | Periodic-poll mechanism for v0.5 creator-stats and inbox features (declared up-front; not scheduled in the v0.4 release). |
 
 ## Host permission justification (for the listing form)
 
-> Each domain corresponds to one platform-specific handler. The
-> extension only navigates to these domains when the user has just
-> initiated an upload request from the Nephele Workshop desktop app.
+> Each domain corresponds to one platform-specific handler that drives
+> the upload form on that platform. The extension only navigates to
+> these domains when the user has just initiated an upload request from
+> the Nephele Workshop desktop app.
+>
+> The host list includes both **shipped** platforms (Bilibili, 小红书,
+> 微博, 抖音, Pixiv, Twitter/X, ArtStation) and **roadmap** platforms
+> declared up-front (Threads, Lofter, 巴哈姆特, Skeb, DeviantArt) so we
+> can ship per-platform handlers in subsequent releases without forcing
+> existing users to re-accept new permissions on every update — Chrome's
+> extension permission model otherwise prompts on every host addition.
+> Roadmap hosts have no handler yet; an upload_draft request targeting
+> one returns INVALID_PAYLOAD until the corresponding handler ships.
+>
 > 127.0.0.1 is for the local-only asset transfer server the desktop
 > app exposes — required because Native Messaging caps individual
 > messages at 1 MB and image bytes routinely exceed that.

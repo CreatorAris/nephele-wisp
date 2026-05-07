@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Nephele Wisp",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Browser-side companion for Nephele Workshop. Uses your real browser so platforms see you, not a bot.",
   "author": "ArisFusion",
   "homepage_url": "https://github.com/CreatorAris/nephele-wisp",
@@ -30,7 +30,8 @@
     "storage",
     "debugger",
     "tabs",
-    "scripting"
+    "scripting",
+    "alarms"
   ],
   "host_permissions": [
     "*://*.bilibili.com/*",
@@ -42,6 +43,11 @@
     "*://*.x.com/*",
     "*://*.twitter.com/*",
     "*://*.artstation.com/*",
+    "*://*.threads.net/*",
+    "*://*.lofter.com/*",
+    "*://*.bahamut.com.tw/*",
+    "*://*.skeb.jp/*",
+    "*://*.deviantart.com/*",
     "http://127.0.0.1/*"
   ],
   "minimum_chrome_version": "116"

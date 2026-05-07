@@ -84,11 +84,41 @@ path) before any page script runs.
 short stubs documented in each handler under `extension/background/
 handlers/`. No persistent content scripts.
 
+### `alarms`
+
+**Why it's required.** The v0.5 roadmap (creator dashboard ingest +
+inbox polling, see `docs/PROTOCOL.md` §Type Catalog v2/v3) needs the
+extension to wake up periodically to poll platform stats and surface
+new comments / DMs to the desktop app. MV3 service workers are
+ephemeral — `setTimeout` does not survive worker shutdowns, so
+`chrome.alarms` is the only reliable mechanism for periodic work.
+
+**Scope.** Alarms only fire `creator.stats_updated` and
+`inbox.new_message` events back to the desktop app. They never make
+their own DOM mutations or initiate uploads — those still require an
+explicit user-initiated request from the desktop UI. Per
+`docs/PROTOCOL.md` §Rate Limits, polling is hard-capped at 4
+creator-stats requests / hour / platform.
+
+Declared up-front (the v0.4 release does not yet schedule any alarms)
+so the v0.5 release does not have to trigger Chrome's "this extension
+requests new permissions" prompt for existing users.
+
 ## Host permissions
 
-Each host pattern below corresponds to a single platform handler that
-implements an image-post upload flow on that domain. Wisp connects to
-none of them outside an active `publisher.upload_draft` request.
+Each host pattern below corresponds to a platform handler that implements
+the image-post upload flow on that domain. Wisp connects to none of them
+outside an active `publisher.upload_draft` request initiated by the user
+from the Nephele Workshop desktop app.
+
+The list is split into **shipped** handlers (image-post upload flow
+implemented and tested) and **roadmap** handlers (planned for v0.5+; the
+host is declared up-front so the extension can ship the new handler
+without prompting users to grant additional permissions on update — the
+Chrome extension permission model otherwise forces a "this extension
+requires new permissions" prompt every time a host is added later).
+
+### Shipped (v0.4)
 
 | Host | Handler | Purpose |
 |---|---|---|
@@ -100,6 +130,29 @@ none of them outside an active `publisher.upload_draft` request.
 | `*://*.x.com/*`, `*://*.twitter.com/*` | `publisher_twitter.js` | Twitter/X tweet compose |
 | `*://*.artstation.com/*` | `publisher_artstation.js` | ArtStation artwork submit |
 | `http://127.0.0.1/*` | `asset.js` | Local-only asset transfer over HTTP from Nephele Workshop's per-session asset server. Tokens are one-time, expire in 5 minutes, and the server binds 127.0.0.1 only. |
+
+### Roadmap (declared up-front, handlers ship in v0.5+)
+
+| Host | Planned handler | Purpose |
+|---|---|---|
+| `*://*.threads.net/*` | `publisher_threads.js` | Meta Threads post compose |
+| `*://*.lofter.com/*` | `publisher_lofter.js` | Lofter (NetEase) artwork post |
+| `*://*.bahamut.com.tw/*` | `publisher_bahamut.js` | 巴哈姆特创作大廳 artwork submit |
+| `*://*.skeb.jp/*` | `publisher_skeb.js` | Skeb commission artwork delivery |
+| `*://*.deviantart.com/*` | `publisher_deviantart.js` | DeviantArt artwork submit |
+
+These hosts are declared in `manifest.json` but no handler currently runs
+against them. Until the corresponding `publisher_<platform>.js` ships in
+a future release, an `upload_draft` request targeting one of these
+platforms returns `INVALID_PAYLOAD` at the dispatch table — the extension
+never navigates to a roadmap host without an implementation behind it.
+
+The reason for declaring them up front is purely UX: every new host added
+later triggers a Chrome-mandated "this extension requests new permissions"
+prompt on update that users must accept before the new handler works. By
+listing the platforms we know we're going to support inside the v0.5
+roadmap, we avoid forcing existing users to re-confirm permissions across
+several point releases.
 
 ## Single purpose
 
