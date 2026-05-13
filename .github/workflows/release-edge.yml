@@ -53,6 +53,25 @@ jobs:
             -x "*.DS_Store" "*.zip" "*.git*" "*.swp"
           ls -la ../wisp-*.zip
 
+      - name: Compose review notes
+        id: notes
+        run: |
+          # head_commit.message is only populated on push events; for
+          # workflow_dispatch we fall back to `git log` against the tagged
+          # commit so reviewers always see a description.
+          MSG="${{ github.event.head_commit.message }}"
+          if [ -z "$MSG" ]; then
+            MSG=$(git log -1 --pretty=%B "${{ steps.ver.outputs.tag }}")
+          fi
+          {
+            echo "notes<<EOF"
+            echo "Release ${{ steps.ver.outputs.tag }}. Source SHA: ${{ github.sha }}."
+            echo ""
+            echo "Commit log:"
+            echo "$MSG"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Upload to Edge Add-ons
         uses: wdzeng/edge-addon@v2
         with:
@@ -60,10 +79,7 @@ jobs:
           zip-path:   wisp-${{ steps.ver.outputs.version }}.zip
           client-id:  ${{ secrets.EDGE_CLIENT_ID }}
           api-key:    ${{ secrets.EDGE_API_KEY }}
-          notes-for-certification: |
-            Release ${{ steps.ver.outputs.tag }}. Source SHA: ${{ github.sha }}.
-            Commit log:
-            ${{ github.event.head_commit.message }}
+          notes-for-certification: ${{ steps.notes.outputs.notes }}
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
