@@ -360,7 +360,13 @@ async function connect() {
         connected = false;
         sessionToken = null;
         nepheleVersion = null;
-        stopHeartbeat();
+        // Intentionally NOT calling stopHeartbeat() here. The alarm is now
+        // the only event source guaranteed to fire after MV3 suspends the
+        // SW — clearing it would orphan the extension if the SW is recycled
+        // before scheduleReconnect's setTimeout fires (setTimeout is also
+        // destroyed on suspend). Leaving the alarm armed means the next
+        // alarm tick wakes the SW, the listener sees `!port`, and kicks
+        // connect() — the recovery path that setTimeout cannot guarantee.
         broadcastStatus();
         scheduleReconnect();
     });
