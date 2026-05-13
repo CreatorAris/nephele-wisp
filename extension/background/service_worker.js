@@ -32,7 +32,15 @@ const PROTOCOL_VERSION = 1;
 const EXTENSION_VERSION = chrome.runtime.getManifest().version;
 const BUILD_SHA = 'dev';
 
-const HEARTBEAT_INTERVAL_MS = 60 * 1000;
+// Heartbeat cadence in minutes (chrome.alarms unit). 0.5 = 30s is both
+// chrome.alarms' minimum periodInMinutes (anything smaller is silently
+// clamped in production) and the MV3 service-worker idle-suspend window
+// — firing exactly at that interval resets the idle timer before it
+// expires, which is what keeps the native messaging port from being
+// torn down. setInterval cannot do this: its callback is destroyed when
+// the SW is recycled, alarms persist and re-wake the SW.
+const HEARTBEAT_ALARM_NAME = 'wisp-heartbeat';
+const HEARTBEAT_PERIOD_MIN = 0.5;
 const MAX_BACKOFF_MS = 32 * 1000;
 
 // ──────────────────────────────────────────────────────────────────
@@ -44,7 +52,6 @@ let sessionToken = null;
 let nepheleVersion = null;
 let connected = false;
 let reconnectAttempts = 0;
-let heartbeatTimer = null;
 let lastStatusBroadcast = 0;
 
 const pendingResponses = new Map();  // id -> callback(response)
@@ -317,18 +324,16 @@ async function performHandshake() {
 // ──────────────────────────────────────────────────────────────────
 
 function startHeartbeat() {
-    stopHeartbeat();
-    heartbeatTimer = setInterval(() => {
-        if (!connected) return;
-        send(envelope('event', 'system.heartbeat', { ts: Date.now() }));
-    }, HEARTBEAT_INTERVAL_MS);
+    chrome.alarms.create(HEARTBEAT_ALARM_NAME, {
+        // delayInMinutes fires the first alarm after the period so the SW
+        // wake-up cadence starts immediately, not at module load.
+        delayInMinutes: HEARTBEAT_PERIOD_MIN,
+        periodInMinutes: HEARTBEAT_PERIOD_MIN,
+    });
 }
 
 function stopHeartbeat() {
-    if (heartbeatTimer) {
-        clearInterval(heartbeatTimer);
-        heartbeatTimer = null;
-    }
+    chrome.alarms.clear(HEARTBEAT_ALARM_NAME);
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -433,6 +438,27 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onStartup.addListener(() => {
     log('onStartup');
     connect();
+});
+
+// MV3 keepalive — must be registered at module top-level so the SW wakes
+// on alarm fire after suspension. The handler itself is the keepalive: the
+// alarm event resets the SW idle timer, and sending the heartbeat as a
+// request (not fire-and-forget event) yields a port.onMessage response
+// that resets it again. Module re-evaluation on wake calls connect() at
+// the bottom of this file, so the alarm listener can usually skip the
+// re-connect path; it just kicks one if `port` is still null.
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+    if (alarm.name !== HEARTBEAT_ALARM_NAME) return;
+    if (!port) {
+        connect();
+        return;
+    }
+    if (!connected) return;
+    try {
+        await request('system.heartbeat', { ts: Date.now() }, 5000);
+    } catch (e) {
+        warn('heartbeat request failed:', e.message);
+    }
 });
 
 // Also connect on SW wakeup — MV3 service workers may be started for
