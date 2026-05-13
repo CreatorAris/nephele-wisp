@@ -1,0 +1,75 @@
+name: Release to Edge Add-ons
+
+# Push a tag `v0.4.3` and the matching extension manifest version ships
+# to the Edge Add-ons review queue + a GitHub Release pins the SHA per
+# README's release-integrity promise. `workflow_dispatch` is available
+# for re-running a failed upload without cutting a new tag.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.4.3). Must already exist.'
+        required: true
+        type: string
+
+permissions:
+  contents: write  # creating GitHub releases
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout at tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          # Strip leading `v` for comparison with manifest.
+          MANIFEST_VER=$(jq -r '.version' extension/manifest.json)
+          TAG_VER="${TAG#v}"
+          if [ "$MANIFEST_VER" != "$TAG_VER" ]; then
+            echo "::error::tag $TAG (=$TAG_VER) does not match manifest version $MANIFEST_VER"
+            exit 1
+          fi
+          echo "tag=$TAG"           >> "$GITHUB_OUTPUT"
+          echo "version=$TAG_VER"   >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG (manifest $MANIFEST_VER)"
+
+      - name: Pack extension
+        run: |
+          cd extension
+          zip -r "../wisp-${{ steps.ver.outputs.version }}.zip" . \
+            -x "*.DS_Store" "*.zip" "*.git*" "*.swp"
+          ls -la ../wisp-*.zip
+
+      - name: Upload to Edge Add-ons
+        uses: wdzeng/edge-addon@v2
+        with:
+          product-id:        ${{ secrets.EDGE_PRODUCT_ID }}
+          zip-path:          wisp-${{ steps.ver.outputs.version }}.zip
+          client-id:         ${{ secrets.EDGE_CLIENT_ID }}
+          client-secret:     ${{ secrets.EDGE_CLIENT_SECRET }}
+          access-token-url:  ${{ secrets.EDGE_ACCESS_TOKEN_URL }}
+          notes-for-certification: |
+            Release ${{ steps.ver.outputs.tag }}. Source SHA: ${{ github.sha }}.
+            Commit log:
+            ${{ github.event.head_commit.message }}
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name:     Wisp ${{ steps.ver.outputs.tag }}
+          generate_release_notes: true
+          files: wisp-${{ steps.ver.outputs.version }}.zip
