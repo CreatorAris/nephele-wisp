@@ -42,6 +42,11 @@ const BUILD_SHA = 'dev';
 const HEARTBEAT_ALARM_NAME = 'wisp-heartbeat';
 const HEARTBEAT_PERIOD_MIN = 0.5;
 const MAX_BACKOFF_MS = 32 * 1000;
+// Heartbeats are now end-to-end (NMH forwards to Workshop UI). If the
+// UI dies behind a live NMH process, these requests start failing.
+// Tolerate transient timeouts (Workshop restart, brief network blip)
+// before declaring the pipe dead — 2 misses = ~1min worst case.
+const MAX_HEARTBEAT_FAILURES = 2;
 
 // ──────────────────────────────────────────────────────────────────
 // Module state
@@ -53,6 +58,7 @@ let nepheleVersion = null;
 let connected = false;
 let reconnectAttempts = 0;
 let lastStatusBroadcast = 0;
+let heartbeatFailures = 0;
 
 const pendingResponses = new Map();  // id -> callback(response)
 
@@ -280,8 +286,39 @@ async function handlePublisherUploadDraft(payload) {
 }
 
 function handleEvent(msg) {
-    // No ext-consumed events in v1. Log for diagnostics.
-    log('event (ignored)', msg.type, msg.payload);
+    switch (msg.type) {
+        case 'system.ui_online':
+            // NMH's reconnector picked up the Workshop UI process.
+            // Flip "connected" on without waiting for next heartbeat.
+            log('UI online event, nephele', msg.payload?.nephele_version);
+            nepheleVersion = msg.payload?.nephele_version ?? nepheleVersion;
+            connected = true;
+            heartbeatFailures = 0;
+            broadcastStatus();
+            return;
+
+        case 'system.ui_shutdown': {
+            // Workshop UI cleanly shut down. Flip "connected" off
+            // immediately instead of waiting up to 30s for the next
+            // heartbeat to time out. Also drop the port so the next
+            // alarm tick reconnects fresh once UI comes back.
+            // Self-initiated port.disconnect() does NOT reliably fire
+            // our own onDisconnect — do its cleanup inline.
+            log('UI shutdown event:', msg.payload?.reason ?? '(no reason)');
+            connected = false;
+            sessionToken = null;
+            nepheleVersion = null;
+            heartbeatFailures = 0;
+            broadcastStatus();
+            const dead = port;
+            port = null;
+            try { dead?.disconnect(); } catch (e) { /* ignore */ }
+            scheduleReconnect();
+            return;
+        }
+        default:
+            log('event (ignored)', msg.type, msg.payload);
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -307,9 +344,14 @@ async function performHandshake() {
 
         sessionToken = result.session_token ?? null;
         nepheleVersion = result.nephele_version ?? null;
-        connected = true;
+        // ui_online is the truth about the full pipe — NMH responding
+        // doesn't prove Workshop is running. Defaults to true for
+        // protocol back-compat with NMH builds that don't ship the flag.
+        connected = result.ui_online !== false;
         reconnectAttempts = 0;
-        log('handshake ok, nephele', nepheleVersion);
+        heartbeatFailures = 0;
+        log('handshake ok, nephele', nepheleVersion,
+            'ui_online=', connected);
         startHeartbeat();
         broadcastStatus();
         return true;
@@ -360,6 +402,7 @@ async function connect() {
         connected = false;
         sessionToken = null;
         nepheleVersion = null;
+        heartbeatFailures = 0;
         // Intentionally NOT calling stopHeartbeat() here. The alarm is now
         // the only event source guaranteed to fire after MV3 suspends the
         // SW — clearing it would orphan the extension if the SW is recycled
@@ -462,8 +505,28 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     if (!connected) return;
     try {
         await request('system.heartbeat', { ts: Date.now() }, 5000);
+        heartbeatFailures = 0;
     } catch (e) {
-        warn('heartbeat request failed:', e.message);
+        heartbeatFailures++;
+        warn('heartbeat failed:', heartbeatFailures, '/', MAX_HEARTBEAT_FAILURES,
+             '—', e.message);
+        if (heartbeatFailures >= MAX_HEARTBEAT_FAILURES) {
+            // End-to-end pipe is dead. UI is gone behind a possibly-live
+            // NMH; flip status off so the popup stops lying, then force a
+            // fresh port so we re-handshake when Workshop comes back.
+            // Self-initiated port.disconnect() does NOT reliably fire our
+            // own onDisconnect listener in Chrome, so do its work inline.
+            warn('heartbeat threshold reached → marking disconnected');
+            connected = false;
+            sessionToken = null;
+            nepheleVersion = null;
+            heartbeatFailures = 0;
+            broadcastStatus();
+            const dead = port;
+            port = null;
+            try { dead?.disconnect(); } catch (err) { /* ignore */ }
+            scheduleReconnect();
+        }
     }
 });
 
