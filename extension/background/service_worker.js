@@ -27,6 +27,7 @@ import { handlePixivUploadDraft } from './handlers/publisher_pixiv.js';
 import { handleTwitterUploadDraft } from './handlers/publisher_twitter.js';
 import { handleArtstationUploadDraft } from './handlers/publisher_artstation.js';
 import { fetchPinterestReferences } from './handlers/reference_pinterest.js';
+import { fetchArtstationReferences } from './handlers/reference_artstation.js';
 
 const NMH_NAME = 'com.arisfusion.nephele_wisp';
 const PROTOCOL_VERSION = 1;
@@ -216,6 +217,13 @@ function routeRequest(msg) {
             // grid via DOM walk. Bypasses headless anti-bot by running
             // in the user's real browser session.
             dispatchAsync(msg, fetchPinterestReferences);
+            return;
+
+        case 'reference.fetch_artstation':
+            // ArtStation professional concept art / illustration —
+            // higher-resolution thumbnails than Danbooru, cleaner than
+            // Pinterest. Same CDP scrape pattern.
+            dispatchAsync(msg, fetchArtstationReferences);
             return;
 
         // Future: creator.fetch_stats, inbox.fetch_comments,
