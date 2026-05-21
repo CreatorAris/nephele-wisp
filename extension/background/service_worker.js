@@ -26,6 +26,7 @@ import { handleDouyinUploadDraft } from './handlers/publisher_douyin.js';
 import { handlePixivUploadDraft } from './handlers/publisher_pixiv.js';
 import { handleTwitterUploadDraft } from './handlers/publisher_twitter.js';
 import { handleArtstationUploadDraft } from './handlers/publisher_artstation.js';
+import { fetchPinterestReferences } from './handlers/reference_pinterest.js';
 
 const NMH_NAME = 'com.arisfusion.nephele_wisp';
 const PROTOCOL_VERSION = 1;
@@ -208,6 +209,13 @@ function routeRequest(msg) {
 
         case 'publisher.upload_draft':
             dispatchAsync(msg, handlePublisherUploadDraft);
+            return;
+
+        case 'reference.fetch_pinterest':
+            // Read-side: open Pinterest search in CDP tab, scrape pin
+            // grid via DOM walk. Bypasses headless anti-bot by running
+            // in the user's real browser session.
+            dispatchAsync(msg, fetchPinterestReferences);
             return;
 
         // Future: creator.fetch_stats, inbox.fetch_comments,
