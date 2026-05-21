@@ -19,7 +19,13 @@
  * /large/ gives ~1200px JPEG (HEAD 200 image/jpeg confirmed).
  */
 
-const PROJECTS_API_URL = 'https://www.artstation.com/projects?keywords=';
+// Use the REAL search API (verified via system.eval 2026-05-21).
+// /projects?keywords= turned out to be a tag-popular feed that
+// ignores the keyword param semantically — it returns recently-
+// popular projects regardless of query. The frontend's actual search
+// uses /api/v2/search/projects.json?query=X&page=N&per_page=M, which
+// does proper relevance ranking.
+const SEARCH_API_URL = 'https://www.artstation.com/api/v2/search/projects.json';
 const DEFAULT_MAX_ITEMS = 40;
 const FETCH_TIMEOUT_MS = 15_000;
 
@@ -41,7 +47,7 @@ export async function fetchArtstationReferences(payload) {
     const maxItems = Math.min(200, Math.max(8,
         parseInt(payload?.max_items, 10) || DEFAULT_MAX_ITEMS));
 
-    const url = PROJECTS_API_URL + encodeURIComponent(query);
+    const url = `${SEARCH_API_URL}?query=${encodeURIComponent(query)}&page=1&per_page=${maxItems}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
@@ -88,14 +94,14 @@ export async function fetchArtstationReferences(payload) {
     }
 
     const data = Array.isArray(json?.data) ? json.data : [];
+    // /api/v2/search/projects shape: each project has a flat
+    // `smaller_square_cover_url` field, not the nested `cover` object the
+    // /projects?keywords= feed used. Path-upgrade still works.
     const items = data.slice(0, maxItems).map((p) => {
-        const cover = p.cover || {};
-        const thumbUrl = _upgradeThumb(
-            cover.thumb_url || cover.small_square_url || cover.micro_square_image_url || ''
-        );
+        const thumbUrl = _upgradeThumb(p.smaller_square_cover_url || '');
         return {
             thumb_url: thumbUrl,
-            page_url: p.permalink
+            page_url: p.url
                 || (p.hash_id ? `https://www.artstation.com/artwork/${p.hash_id}` : ''),
             alt: p.title || '',
             artist: p.user?.username || p.user?.full_name || '',
