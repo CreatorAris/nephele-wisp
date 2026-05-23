@@ -113,14 +113,24 @@ export async function fetchArtstationReferences(payload) {
 
     const data = Array.isArray(json?.data) ? json.data : [];
     const items = data.slice(0, maxItems).map((p) => {
-        const thumbUrl = _upgradeThumb(p.smaller_square_cover_url || '');
+        // _upgradeThumb rewrites /smaller_square/ → /large/. /large/ is
+        // ~1200px wide — the highest reliable variant from the search
+        // API. /4k/ and /original/ exist on the per-project endpoint but
+        // not all projects have them. Use /large/ for both thumb and
+        // large_url so consumers have a consistent field shape.
+        const largeUrl = _upgradeThumb(p.smaller_square_cover_url || '');
         return {
-            thumb_url: thumbUrl,
+            thumb_url: largeUrl,
+            large_url: largeUrl,
             page_url: p.url
                 || p.permalink
                 || (p.hash_id ? `https://www.artstation.com/artwork/${p.hash_id}` : ''),
+            hash_id: p.hash_id || '',
             alt: p.title || '',
             artist: p.user?.username || p.user?.full_name || '',
+            artist_url: p.user?.username
+                ? `https://www.artstation.com/${p.user.username}`
+                : '',
             width: 0,
             height: 0,
         };

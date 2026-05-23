@@ -111,25 +111,39 @@ export async function fetchPinterestReferences(payload) {
                 // bearing images so we skip lazy placeholders.
                 const img = cell.querySelector('img');
                 if (!img || !img.src) continue;
-                // Pinterest serves thumbs at /236x/ — rewrite to a larger
-                // size /564x/ which is the standard "card detail" image
-                // (works without auth, hotlink-friendly via headers).
+                // Pinterest CDN size variants: /236x/ (thumb), /564x/
+                // (card detail, default for picker grid), /736x/ (large
+                // preview, what we expose for zoom and Eagle save), and
+                // /originals/ (full source — sometimes 404s when the
+                // upload format differs, so we prefer /736x/ as the
+                // "large" tier).
                 let thumbUrl = img.src;
+                let largeUrl = thumbUrl;
                 const m = thumbUrl.match(/^(https?:\/\/[^/]+)\/(\d+x|\d+x\d+|originals)\/(.*)$/);
                 if (m && m[2] !== 'originals') {
                     thumbUrl = `${m[1]}/564x/${m[3]}`;
+                    largeUrl = `${m[1]}/736x/${m[3]}`;
+                } else if (m && m[2] === 'originals') {
+                    largeUrl = thumbUrl;  // already largest
                 }
                 if (seen.has(thumbUrl)) continue;
                 seen.add(thumbUrl);
                 // The cell wraps the pin in an <a href="/pin/<id>/">.
                 let pageUrl = '';
+                let pinId = '';
                 const link = cell.querySelector('a[href^="/pin/"]');
                 if (link) {
-                    pageUrl = new URL(link.getAttribute('href'), location.origin).href;
+                    const href = link.getAttribute('href');
+                    pageUrl = new URL(href, location.origin).href;
+                    // /pin/123456789012345/ → 123456789012345
+                    const idMatch = href.match(/\/pin\/(\d+)/);
+                    if (idMatch) pinId = idMatch[1];
                 }
                 out.push({
                     thumb_url: thumbUrl,
+                    large_url: largeUrl,
                     page_url: pageUrl,
+                    pin_id: pinId,
                     alt: img.alt || '',
                     width: img.naturalWidth || 0,
                     height: img.naturalHeight || 0,
