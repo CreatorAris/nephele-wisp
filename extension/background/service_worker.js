@@ -18,7 +18,7 @@
  * Protocol: see docs/PROTOCOL.md (v1).
  */
 
-import { withCdpTab, classifyCdpError } from './cdp.js';
+import { CdpSession, withCdpTab, classifyCdpError } from './cdp.js';
 import { handleBilibiliUploadDraft } from './handlers/publisher_bilibili.js';
 import { handleXiaohongshuUploadDraft } from './handlers/publisher_xiaohongshu.js';
 import { handleWeiboUploadDraft } from './handlers/publisher_weibo.js';
@@ -26,8 +26,11 @@ import { handleDouyinUploadDraft } from './handlers/publisher_douyin.js';
 import { handlePixivUploadDraft } from './handlers/publisher_pixiv.js';
 import { handleTwitterUploadDraft } from './handlers/publisher_twitter.js';
 import { handleArtstationUploadDraft } from './handlers/publisher_artstation.js';
+import { fetchBilibiliStats } from './handlers/creator_bilibili.js';
+import { fetchPixivStats } from './handlers/creator_pixiv.js';
 import { fetchPinterestReferences } from './handlers/reference_pinterest.js';
 import { fetchArtstationReferences } from './handlers/reference_artstation.js';
+import { fetchHuabanReferences } from './handlers/reference_huaban.js';
 
 const NMH_NAME = 'com.arisfusion.nephele_wisp';
 const PROTOCOL_VERSION = 1;
@@ -212,6 +215,10 @@ function routeRequest(msg) {
             dispatchAsync(msg, handlePublisherUploadDraft);
             return;
 
+        case 'creator.fetch_stats':
+            dispatchAsync(msg, handleCreatorFetchStats);
+            return;
+
         case 'reference.fetch_pinterest':
             // Read-side: open Pinterest search in CDP tab, scrape pin
             // grid via DOM walk. Bypasses headless anti-bot by running
@@ -226,8 +233,27 @@ function routeRequest(msg) {
             dispatchAsync(msg, fetchArtstationReferences);
             return;
 
-        // Future: creator.fetch_stats, inbox.fetch_comments,
-        // inbox.reply, scheduler.execute, ...
+        case 'reference.fetch_huaban':
+            // Huaban (花瓣) — 中文画师常驻平台. EdgeOne CDN refuses
+            // Python downloads even with browser UA + cookies, so this
+            // handler fetches each thumbnail SW-side and inlines as
+            // base64 in the response. Bytes shipped per call ~500KB
+            // (capped at 40 items × ~20KB base64).
+            dispatchAsync(msg, fetchHuabanReferences);
+            return;
+
+        // Removed: 'inbox.fetch_comments', 'inbox.reply', 'scheduler.execute'
+        // (Phase 3 — protocol namespace gate already permits them when added).
+
+        case 'system.eval':
+            // Dev-only probe. Evaluates JS in a target tab's page
+            // context via temporary CDP debugger attach. Gated on
+            // BUILD_SHA === 'dev' inside the handler so Web Store
+            // builds reject it even if the route slips through.
+            dispatchAsync(msg, handleSystemEval);
+            return;
+
+        // Future: inbox.fetch_comments, inbox.reply, scheduler.execute, ...
 
         default:
             send(envelope(
@@ -256,6 +282,25 @@ function dispatchAsync(msg, fn) {
         }
     })();
 }
+
+// Platform router for creator.fetch_stats — keeps the dispatch table
+// next to the publisher dispatch for symmetry. New platform = one more
+// row here + a creator_{platform}.js module under ./handlers/.
+async function handleCreatorFetchStats(payload) {
+    const platform = payload.platform_key || payload.platform || '';
+    const dispatchTable = {
+        bilibili: fetchBilibiliStats,
+        pixiv: fetchPixivStats,
+    };
+    const fn = dispatchTable[platform];
+    if (!fn) {
+        const err = new Error(`unsupported platform: ${platform || '(missing)'}`);
+        err.code = 'INVALID_PAYLOAD';
+        throw err;
+    }
+    return await fn(payload);
+}
+
 
 async function handlePublisherUploadDraft(payload) {
     const platform = payload.platform_key || '';
@@ -299,6 +344,82 @@ async function handlePublisherUploadDraft(payload) {
         },
         { keepTab: true, active: true },
     );
+}
+
+// ──────────────────────────────────────────────────────────────────
+// system.eval — dev probe
+// ──────────────────────────────────────────────────────────────────
+//
+// Attaches a temporary CDP session to a tab matched by URL pattern
+// (or the currently-active tab if no pattern given), runs
+// Runtime.evaluate, returns the serialized result. Used by
+// `scripts/wisp_probe.py` to diagnose publisher handler DOM drift
+// without touching PublisherView. Gated on BUILD_SHA === 'dev' so
+// Web Store builds reject calls outright.
+async function handleSystemEval(payload) {
+    if (BUILD_SHA !== 'dev') {
+        const err = new Error('FORBIDDEN: system.eval disabled on non-dev builds');
+        err.code = 'FORBIDDEN';
+        throw err;
+    }
+    payload = payload || {};
+    const expression = String(payload.expression || '');
+    if (!expression) {
+        const err = new Error('INVALID_PAYLOAD: expression required');
+        err.code = 'INVALID_PAYLOAD';
+        throw err;
+    }
+    const urlPattern = payload.url_pattern || null;
+    const awaitPromise = Boolean(payload.await_promise);
+    const returnByValue = payload.return_by_value !== false;
+
+    const query = urlPattern
+        ? { url: urlPattern }
+        : { active: true, currentWindow: true };
+    const tabs = await new Promise((resolve, reject) => {
+        chrome.tabs.query(query, (ts) => {
+            const e = chrome.runtime.lastError;
+            if (e) reject(new Error(`tabs.query: ${e.message}`));
+            else resolve(ts || []);
+        });
+    });
+    if (!tabs.length) {
+        const err = new Error(
+            `TAB_NOT_FOUND: no tab matched ${urlPattern || '(active)'}`,
+        );
+        err.code = 'TAB_NOT_FOUND';
+        throw err;
+    }
+    const tab = tabs[0];
+    const session = new CdpSession(tab.id);
+    try {
+        await session.attach();
+        const r = await session.send('Runtime.evaluate', {
+            expression,
+            returnByValue,
+            awaitPromise,
+        });
+        if (r.exceptionDetails) {
+            const desc = (r.exceptionDetails.exception && r.exceptionDetails.exception.description)
+                || r.exceptionDetails.text
+                || 'eval failed';
+            const err = new Error(`EVAL_ERROR: ${desc}`);
+            err.code = 'EVAL_ERROR';
+            err.data = { exception: r.exceptionDetails };
+            throw err;
+        }
+        return {
+            tab_id: tab.id,
+            tab_url: tab.url,
+            tab_title: tab.title,
+            value: r.result && r.result.value,
+            type: r.result && r.result.type,
+            unserializable: r.result && r.result.unserializableValue,
+            tab_matches: tabs.length,
+        };
+    } finally {
+        try { await session.detach(); } catch (_) { /* noop */ }
+    }
 }
 
 function handleEvent(msg) {
