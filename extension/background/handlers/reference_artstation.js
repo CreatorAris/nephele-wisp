@@ -1,26 +1,26 @@
 /*
- * ArtStation reference search — POST API matching the SPA.
+ * ArtStation reference search — GET API with pro_first ranking.
  *
- * Why POST instead of GET on /api/v2/search/projects.json:
- *   The GET form works but ignores `pro_first`, which is the killer
- *   relevance booster — the website's /search?query=X view sends POST
- *   with body `{query, page, per_page, sorting:"relevance",
- *   pro_first:"1", filters:[], additional_fields:[]}` and ranks Pro
- *   members' work above hobby/student posts. Without pro_first our
- *   GET results led with amateur sketches (e.g. lizchief at #0 for
- *   "techwear") while the real screen led with finished Pro work
- *   (ramens "Techwear Girl"). Verified 2026-05-22 via system.eval
- *   intercept on a logged-in tab; SPA call site is in
- *   common_head_js bundle's httpClient.post(...).
+ * History:
+ *   - cf65baf (2026-05-XX): DOM scrape via CDP tab
+ *   - b1106f9: drop CDP, switch to SW direct fetch
+ *   - b795b80: switch to /api/v2/search/projects.json (was tag-popular feed)
+ *   - 1a80842 (2026-05-22): switched to POST + CSRF + pro_first ranking
+ *   - 2026-05-23: rolled back to GET. POST path died because
+ *       1. artstation.com/ homepage now returns 403 (CF Bot Fight Mode),
+ *          breaking the CSRF meta fetch that POST required
+ *       2. Even with a hardcoded sentinel CSRF token, the SW POST gets
+ *          412 from ArtStation — likely due to cross-origin Origin/
+ *          Referer headers automatically attached by the browser to
+ *          extension-side fetch (curl works because it sends neither).
+ *          MV3 forbids modifying Origin from JS; the only fix would be
+ *          declarativeNetRequest rules, adding deploy surface for no
+ *          gain.
+ *   The GET endpoint accepts `pro_first=1` as a query param and ranks
+ *   identically to the POST form. Verified 2026-05-23: GET with
+ *   pro_first=1 puts ramens "Techwear Girl" at #0, same as POST.
  *
- * CSRF:
- *   ArtStation rejects POST without a `Public-Csrf-Token` header
- *   (412 Invalid CSRF Token). The token is published in
- *   `<meta name="public-csrf-token">` on any HTML page. We fetch
- *   https://www.artstation.com/ once, regex the meta, cache in
- *   module-scope for FETCH_CSRF_TTL_MS, retry once on 412.
- *
- * Field shape (POST response, verified 2026-05-22):
+ * Field shape (GET response, verified 2026-05-23):
  *   data: [{
  *     id, hash_id, slug, title,
  *     smaller_square_cover_url,           // flat, not nested under cover
@@ -30,18 +30,9 @@
  */
 
 const SEARCH_API_URL = 'https://www.artstation.com/api/v2/search/projects.json';
-const CSRF_PAGE_URL = 'https://www.artstation.com/';
-// Match the meta tag broadly first, then extract content separately, so
-// attribute order swap (`content` before `name`) doesn't silently miss
-// the token and look like a logged-out state.
-const CSRF_META_TAG_RE = /<meta\b[^>]*name=["']public-csrf-token["'][^>]*>/i;
-const CSRF_CONTENT_RE = /content=["']([^"']+)["']/i;
 
 const DEFAULT_MAX_ITEMS = 40;
 const FETCH_TIMEOUT_MS = 15_000;
-const FETCH_CSRF_TTL_MS = 10 * 60 * 1000; // 10 min
-
-let _csrfCache = { token: null, fetchedAt: 0 };
 
 function _upgradeThumb(url) {
     if (!url) return '';
@@ -51,73 +42,27 @@ function _upgradeThumb(url) {
     );
 }
 
-async function _fetchCsrfToken({ force = false } = {}) {
-    if (!force && _csrfCache.token
-        && Date.now() - _csrfCache.fetchedAt < FETCH_CSRF_TTL_MS) {
-        return _csrfCache.token;
-    }
+async function _searchGet(query, maxItems) {
+    const params = new URLSearchParams({
+        query,
+        page: '1',
+        per_page: String(maxItems),
+        sorting: 'relevance',
+        pro_first: '1',
+    });
+    const url = `${SEARCH_API_URL}?${params.toString()}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
-        const resp = await fetch(CSRF_PAGE_URL, {
-            credentials: 'include',
-            headers: { 'Accept': 'text/html' },
-            signal: controller.signal,
-        });
-        if (resp.status === 401 || resp.status === 403) {
-            const err = new Error(`AUTH_REQUIRED: ArtStation ${resp.status} on CSRF fetch`);
-            err.code = 'AUTH_REQUIRED';
-            err.data = { status: resp.status };
-            throw err;
-        }
-        if (!resp.ok) {
-            const err = new Error(`NETWORK_ERROR: CSRF fetch HTTP ${resp.status}`);
-            err.code = 'NETWORK_ERROR';
-            throw err;
-        }
-        const html = await resp.text();
-        const tagMatch = html.match(CSRF_META_TAG_RE);
-        const contentMatch = tagMatch && tagMatch[0].match(CSRF_CONTENT_RE);
-        if (!contentMatch) {
-            const err = new Error('AUTH_REQUIRED: no public-csrf-token meta found');
-            err.code = 'AUTH_REQUIRED';
-            throw err;
-        }
-        _csrfCache = { token: contentMatch[1], fetchedAt: Date.now() };
-        return contentMatch[1];
-    } finally {
-        clearTimeout(timer);
-    }
-}
-
-async function _searchPost(query, maxItems, csrfToken) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    let resp;
-    try {
-        resp = await fetch(SEARCH_API_URL, {
-            method: 'POST',
-            credentials: 'include',
-            headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json',
-                'Public-Csrf-Token': csrfToken,
-            },
-            body: JSON.stringify({
-                query,
-                page: 1,
-                per_page: maxItems,
-                sorting: 'relevance',
-                pro_first: '1',
-                filters: [],
-                additional_fields: [],
-            }),
+        return await fetch(url, {
+            method: 'GET',
+            credentials: 'omit',
+            headers: { 'Accept': 'application/json' },
             signal: controller.signal,
         });
     } finally {
         clearTimeout(timer);
     }
-    return resp;
 }
 
 export async function fetchArtstationReferences(payload) {
@@ -130,11 +75,9 @@ export async function fetchArtstationReferences(payload) {
     const maxItems = Math.min(200, Math.max(8,
         parseInt(payload?.max_items, 10) || DEFAULT_MAX_ITEMS));
 
-    let csrfToken = await _fetchCsrfToken();
-
     let resp;
     try {
-        resp = await _searchPost(query, maxItems, csrfToken);
+        resp = await _searchGet(query, maxItems);
     } catch (e) {
         if (e?.name === 'AbortError') {
             const err = new Error(`TIMEOUT: search timed out after ${FETCH_TIMEOUT_MS}ms`);
@@ -144,23 +87,6 @@ export async function fetchArtstationReferences(payload) {
         const err = new Error(`NETWORK_ERROR: ${e?.message || e}`);
         err.code = 'NETWORK_ERROR';
         throw err;
-    }
-
-    // 412 = CSRF expired/rotated. Refetch token once and retry.
-    if (resp.status === 412) {
-        csrfToken = await _fetchCsrfToken({ force: true });
-        try {
-            resp = await _searchPost(query, maxItems, csrfToken);
-        } catch (e) {
-            if (e?.name === 'AbortError') {
-                const err = new Error(`TIMEOUT: retry timed out after ${FETCH_TIMEOUT_MS}ms`);
-                err.code = 'TIMEOUT';
-                throw err;
-            }
-            const err = new Error(`NETWORK_ERROR: retry failed (${e?.message || e})`);
-            err.code = 'NETWORK_ERROR';
-            throw err;
-        }
     }
 
     if (resp.status === 401 || resp.status === 403) {
