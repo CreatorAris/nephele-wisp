@@ -40,7 +40,12 @@ const CAPTION_SELECTOR = '.bili-rich-textarea__inner';
 const PIC_TOOL_SELECTOR = '.bili-dyn-publishing__tools__item.pic';
 const PIC_ADD_SELECTOR = '.bili-pics-uploader__add';
 const UPLOAD_SUCCESS_SELECTOR = '.bili-pics-uploader__item.success';
-const UPLOAD_FAILED_SELECTOR = '.bili-pics-uploader__item.failed';
+// B站 currently uses `.error` (CSS class on the tile) with a child
+// `.bili-pics-uploader-item-error__msg` carrying the human-visible
+// reason text. Older builds used `.failed` — keep both in the
+// selector list to be tolerant of A/B rollouts. Used in
+// querySelectorAll which accepts comma-separated selector groups.
+const UPLOAD_FAILED_SELECTOR = '.bili-pics-uploader__item.failed, .bili-pics-uploader__item.error';
 const PUBLISH_BTN_SELECTOR = '.bili-dyn-publishing__action.launcher';
 const TOPIC_INPUT_SELECTOR = '.bili-topic-search__input';
 
@@ -162,8 +167,41 @@ export async function handleBilibiliUploadDraft(session, payload) {
     }
 
     if (hasImages) {
-        await uploadImages(session, localPaths);
-        await waitForUploadComplete(session, { expectedCount: localPaths.length });
+        // Network diagnostic listener — captures ALL response events for
+        // this tab during the upload window so we can see what request
+        // B站 actually fires (URL pattern is unstable across builds, and
+        // a too-narrow filter has missed the real upload endpoint).
+        // Cap memory at 200 entries (well above expected traffic) and
+        // skip noisy static asset MIMEs to keep the diag readable.
+        await session.send('Network.enable');
+        const NET_CAP = 200;
+        const NOISE_MIME = /^(image\/(?!gif$).*|font\/|text\/css|application\/javascript|application\/x-javascript|application\/json;.*beacon|application\/wasm)/;
+        const uploadResponses = [];
+        const netListener = (src, method, params) => {
+            if (src.tabId !== session.tabId) return;
+            if (method !== 'Network.responseReceived') return;
+            if (uploadResponses.length >= NET_CAP) return;
+            const resp = params.response || {};
+            const mime = resp.mimeType || '';
+            // Drop pure static asset noise — but keep anything with
+            // a non-2xx status, since errors are exactly what we want.
+            if (NOISE_MIME.test(mime) && resp.status >= 200 && resp.status < 300) return;
+            uploadResponses.push({
+                url: resp.url || '',
+                status: resp.status,
+                request_id: params.requestId,
+                mime,
+                ts: Date.now(),
+            });
+        };
+        chrome.debugger.onEvent.addListener(netListener);
+        session.__uploadResponses = uploadResponses;
+        try {
+            await uploadImages(session, localPaths);
+            await waitForUploadComplete(session, { expectedCount: localPaths.length });
+        } finally {
+            try { chrome.debugger.onEvent.removeListener(netListener); } catch (_) { /* noop */ }
+        }
     }
 
     let topicNote = '';
@@ -241,7 +279,19 @@ async function uploadImages(session, localPaths) {
         return el ? el.className.includes('active') : null;
     }, [PIC_TOOL_SELECTOR]);
     if (!picActive) {
-        await session.click(PIC_TOOL_SELECTOR);
+        // Programmatic .click() rather than CDP Input.dispatchMouseEvent —
+        // current B站 build does not flip the tab's `.active` class when
+        // CDP-driven trusted clicks land on this Vue tab item (probable
+        // ref-capture timing in their bundle). A direct el.click() runs
+        // synchronously inside the Vue render frame and the active
+        // toggle takes immediately. This is safe because PIC_TOOL is
+        // just a tab switcher — no isTrusted gating, no file picker.
+        // PIC_ADD below still uses session.click() (CDP trusted gesture)
+        // because the file chooser DOES require isTrusted.
+        await session.evaluateFn((sel) => {
+            const el = document.querySelector(sel);
+            if (el) el.click();
+        }, [PIC_TOOL_SELECTOR]);
         await sleep(600);
     }
 
@@ -295,7 +345,30 @@ async function waitForUploadComplete(session, { timeoutMs = 25000, expectedCount
             };
         }, [UPLOAD_SUCCESS_SELECTOR, UPLOAD_FAILED_SELECTOR, PUBLISH_BTN_SELECTOR]);
         if (state.failedCount > 0) {
-            throw new Error(`B站拒绝上传图片（${state.failedCount} 张服务端标记失败）`);
+            const failText = await session.evaluateFn((failSel) => {
+                const t = document.querySelector(failSel);
+                if (!t) return '';
+                const msg = t.querySelector('.bili-pics-uploader-item-error__msg');
+                return ((msg || t).innerText || '').trim().slice(0, 200);
+            }, [UPLOAD_FAILED_SELECTOR]);
+            // Pull the backend's actual rejection by fetching the body of
+            // the most recent upload-related response captured by the
+            // outer Network listener. B站 UI typically renders only "上传失败"
+            // even when the backend returned a JSON error (rate limit,
+            // banned account, mime-type mismatch, etc.) — this lifts that
+            // detail into err.data.network_diag.
+            const network_diag = await collectNetworkDiag(session);
+            const detail = failText ? `：${failText}` : '';
+            const err = new Error(
+                `UPLOAD_REJECTED: B站拒绝上传图片（${state.failedCount} 张${detail}）`,
+            );
+            err.code = 'UPLOAD_REJECTED';
+            err.data = {
+                failed_count: state.failedCount,
+                ui_message: failText,
+                network_diag,
+            };
+            throw err;
         }
         if (!allOk && state.successCount >= expectedCount) allOk = true;
         if (allOk && state.publishEnabled) {
@@ -429,6 +502,43 @@ async function pickTopic(session, topicName) {
         await sleep(120);
     }
     throw new Error('TOPIC_NEEDS_MANUAL_CLICK');
+}
+
+// Pull bodies for upload-related responses captured by the handler's
+// network listener. Used when B站 backend rejects an upload so the
+// caller can see the real status + JSON error code instead of B站's
+// vague "上传失败" UI. Best-effort — body fetch can fail on long-lived
+// streams that closed before getResponseBody arrives; we tolerate.
+async function collectNetworkDiag(session) {
+    const responses = session.__uploadResponses || [];
+    if (!responses.length) return { count: 0, note: 'no response captured' };
+    // Show URL/status for the last 15 entries so we can spot the real
+    // upload endpoint by inspection; fetch body only for responses
+    // that look like an upload (anything with status != 200, OR URL
+    // suggestive of upload/asset/image/picture). This keeps the diag
+    // readable while still surfacing the failure signal.
+    const tail = responses.slice(-15);
+    const BODY_HINT = /upload|asset|create|/i;
+    const out = [];
+    for (const r of tail) {
+        const entry = { url: r.url, status: r.status, mime: r.mime };
+        const interesting = r.status >= 400
+            || /upload|asset|create|image|pic|file/i.test(r.url);
+        if (interesting) {
+            try {
+                const body = await session.send('Network.getResponseBody', {
+                    requestId: r.request_id,
+                });
+                const raw = body.body || '';
+                entry.body_preview = raw.slice(0, 600);
+                if (body.base64Encoded) entry.base64 = true;
+            } catch (e) {
+                entry.body_fetch_error = (e && e.message) || String(e);
+            }
+        }
+        out.push(entry);
+    }
+    return { count: responses.length, tail: out };
 }
 
 async function isPublishEnabled(session) {

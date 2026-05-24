@@ -41,15 +41,17 @@ platform's upload form using your existing login session. **Wisp
 always stops at "draft ready" — you review the result in the browser
 and click publish yourself.**
 
-**Supported platforms (image post draft):**
+Wisp ships handlers for several major image-publishing platforms,
+covering both Asian social networks and Western art portfolio sites.
+The exact platform list is visible in the screenshots and in the
+manifest's host permissions, and is documented in the project README.
+The list grows with each release; existing handlers are not removed.
 
-- Bilibili (动态)
-- Xiaohongshu (小红书图文笔记)
-- Weibo (微博图片微博)
-- Douyin (抖音图文)
-- Pixiv (illust)
-- Twitter / X (tweet)
-- ArtStation (artwork)
+> Note: do NOT enumerate platform brand names in the Chrome Web Store
+> description. The "Yellow Argon" spam classifier flags any inline
+> list of ≥5 brand names as keyword stuffing, even without
+> parenthetical keywords. Brand names live in screenshots / README /
+> host_permissions only.
 
 **What Wisp will never do:**
 
