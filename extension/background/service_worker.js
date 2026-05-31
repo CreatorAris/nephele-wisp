@@ -35,6 +35,11 @@ import { fetchHuabanReferences } from './handlers/reference_huaban.js';
 const NMH_NAME = 'com.arisfusion.nephele_wisp';
 const PROTOCOL_VERSION = 1;
 const EXTENSION_VERSION = chrome.runtime.getManifest().version;
+// 'dev' in source and in unpacked dev loads. scripts/pack.py rewrites
+// this to the manifest version when building the store artifact, so the
+// handshake reports the real build AND the dev-only eval gate below
+// fails closed (it requires BUILD_SHA === 'dev') even if the dev-only
+// strip were ever skipped — defense in depth on top of the strip.
 const BUILD_SHA = 'dev';
 
 // Heartbeat cadence in minutes (chrome.alarms unit). 0.5 = 30s is both
@@ -245,13 +250,16 @@ function routeRequest(msg) {
         // Removed: 'inbox.fetch_comments', 'inbox.reply', 'scheduler.execute'
         // (Phase 3 — protocol namespace gate already permits them when added).
 
+        // @wisp-dev-only:start — scripts/pack.py strips this block from
+        // the store artifact (and the pack FAILS if 'system.eval'
+        // survives), so the eval probe exists ONLY in unpacked dev loads.
         case 'system.eval':
-            // Dev-only probe. Evaluates JS in a target tab's page
-            // context via temporary CDP debugger attach. Gated on
-            // BUILD_SHA === 'dev' inside the handler so Web Store
-            // builds reject it even if the route slips through.
+            // Dev probe used by the desktop repo's scripts/wisp_probe.py
+            // to diagnose handler DOM drift. Doubly guarded: stripped at
+            // build time, and BUILD_SHA === 'dev' gated in handleSystemEval.
             dispatchAsync(msg, handleSystemEval);
             return;
+        // @wisp-dev-only:end
 
         // Future: inbox.fetch_comments, inbox.reply, scheduler.execute, ...
 
@@ -346,16 +354,20 @@ async function handlePublisherUploadDraft(payload) {
     );
 }
 
+// @wisp-dev-only:start — scripts/pack.py strips this whole block from
+// the store artifact; the CI pack also FAILS if 'handleSystemEval' or
+// 'system.eval' survive, so this probe never reaches a published build.
 // ──────────────────────────────────────────────────────────────────
 // system.eval — dev probe
 // ──────────────────────────────────────────────────────────────────
 //
 // Attaches a temporary CDP session to a tab matched by URL pattern
 // (or the currently-active tab if no pattern given), runs
-// Runtime.evaluate, returns the serialized result. Used by
-// `scripts/wisp_probe.py` to diagnose publisher handler DOM drift
-// without touching PublisherView. Gated on BUILD_SHA === 'dev' so
-// Web Store builds reject calls outright.
+// Runtime.evaluate, returns the serialized result. Used by the desktop
+// repo's `scripts/wisp_probe.py` to diagnose publisher handler DOM
+// drift. Two independent guards keep it out of production: (1) the
+// build-time strip above, and (2) the BUILD_SHA === 'dev' check below,
+// which fails closed because pack.py rewrites BUILD_SHA to the version.
 async function handleSystemEval(payload) {
     if (BUILD_SHA !== 'dev') {
         const err = new Error('FORBIDDEN: system.eval disabled on non-dev builds');
@@ -421,6 +433,7 @@ async function handleSystemEval(payload) {
         try { await session.detach(); } catch (_) { /* noop */ }
     }
 }
+// @wisp-dev-only:end
 
 function handleEvent(msg) {
     switch (msg.type) {

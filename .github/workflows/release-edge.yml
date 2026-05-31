@@ -46,12 +46,16 @@ jobs:
           echo "version=$TAG_VER"   >> "$GITHUB_OUTPUT"
           echo "Releasing $TAG (manifest $MANIFEST_VER)"
 
-      - name: Pack extension
+      - name: Pack extension (strip dev-only blocks)
+        # pack.py strips @wisp-dev-only blocks (system.eval probe), injects
+        # BUILD_SHA, drops READMEs, and FAILS the job if any dev-only token
+        # survives — so the store artifact can never ship the eval route.
+        # Defaults BUILD_SHA to the manifest version so a local
+        # `python scripts/pack.py` for the manual Chrome upload produces a
+        # byte-identical zip.
         run: |
-          cd extension
-          zip -r "../wisp-${{ steps.ver.outputs.version }}.zip" . \
-            -x "*.DS_Store" "*.zip" "*.git*" "*.swp"
-          ls -la ../wisp-*.zip
+          python3 scripts/pack.py --out .
+          ls -la wisp-*.zip
 
       - name: Compose review notes
         id: notes

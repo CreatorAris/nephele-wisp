@@ -563,6 +563,15 @@ export async function withCdpTab(initialUrl, fn, { keepTab = false, active = fal
     const session = new CdpSession(tab.id);
     try {
         await session.attach();
+        // Background tabs (active:false) are throttled by Chrome: rAF pauses
+        // and lazy/virtualized renderers (e.g. Pinterest's search grid) never
+        // paint, so selector waits time out with DOM_NOT_FOUND even though the
+        // page loaded fine. Force the renderer to treat the tab as focused so
+        // it paints — WITHOUT stealing the user's real tab focus (keeps Wisp
+        // non-disruptive). Best-effort: ignore if the domain is unavailable.
+        try {
+            await session.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+        } catch (_) { /* noop — older Chrome / domain unavailable */ }
         return await fn(session, tab);
     } finally {
         try { await session.detach(); } catch (_) { /* noop */ }

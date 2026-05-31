@@ -1,68 +1,106 @@
 # Nephele Wisp — Privacy Policy
 
-_Last updated: 2026-04-28_
+_Last updated: 2026-05-31_
 
 ## Summary
 
 Nephele Wisp is a browser extension that bridges the Nephele Workshop
-desktop application to your browser so the desktop app can fill upload
-forms on social media sites you're already logged into.
+desktop application to your browser. It acts only on requests the desktop
+app sends, using your existing logged-in browser session, and returns the
+result to the desktop app.
 
-**Wisp does not collect, transmit, or store any of your personal data on
-any remote server.** All communication is between the extension and the
-Nephele Workshop desktop process running on the same computer, over a
-loopback connection (`127.0.0.1`) and the browser's Native Messaging
-channel.
+**Wisp does not collect, transmit, or store any of your data on any remote
+server.** Every request originates from the Nephele Workshop desktop
+process running on the same computer, and every result is returned to that
+same local process over a loopback connection (`127.0.0.1`) and the
+browser's Native Messaging channel. Wisp has no server of its own and no
+analytics or telemetry.
 
-## Data the extension handles
+## What Wisp does, and the data each request handles
 
-The extension is exposed to the following data while a request is being
-processed:
+Wisp performs three kinds of request, each one explicitly initiated by you
+from the desktop app. None of them runs in the background or on a schedule
+you did not start.
+
+### 1. Publishing a draft (`publisher.upload_draft`)
+
+Fills an upload form on a platform you choose and stops at "draft ready"
+for you to review and publish manually.
 
 | Data | Source | Where it goes |
 |---|---|---|
-| Image bytes you asked the desktop app to upload | Local-only HTTP server on `127.0.0.1`, one-time token URL issued by the desktop app | Read into a Blob, verified against a SHA-256 hash, then handed to the platform's `<input type="file">` via Chrome DevTools Protocol. Never sent anywhere else. |
-| The text you asked the desktop app to use as a post title / caption / topic | Native Messaging from the desktop app | Typed into the platform's compose form. Never sent anywhere else. |
-| Your current page URL on the platform you're posting to | DevTools Protocol on the tab Wisp opens itself | Used to detect login walls / captcha / wrong page; reported back to the desktop app as part of the response. Never sent to a third party. |
-| A randomly-generated stable per-profile ID (`wp_<uuid>`) | Generated and stored in `chrome.storage.local` | Sent to the desktop app on handshake so it can correlate repeat connections from the same browser profile. Not linked to any platform account, real-world identity, or telemetry system. |
+| Image bytes you asked the desktop app to upload | Local-only HTTP server on `127.0.0.1`, one-time token URL issued by the desktop app | Read into a Blob, verified against a SHA-256 hash, handed to the platform's `<input type="file">` via CDP. Never sent anywhere else. |
+| The title / caption / topic text you provided | Native Messaging from the desktop app | Typed into the platform's compose form. Never sent anywhere else. |
+| The current page URL on the platform | The tab Wisp opens itself | Used to detect login walls / captcha / wrong page; reported back to the desktop app. Never sent to a third party. |
 
-## Data the extension does NOT handle
+### 2. Collecting reference images (`reference.fetch_*`)
 
-- Browsing history
-- Cookies, session tokens, or credentials of any platform
-- Form input outside the upload flows it actively drives
-- Any data from tabs that Wisp did not open itself
+When you run a reference search in the desktop app, Wisp opens the search
+page for the source you chose (Pinterest, Huaban, or ArtStation) and reads
+the results, so the desktop app can show you reference thumbnails. This is
+the same thing you would do by searching the site yourself; Wisp does it in
+your session so the result matches what you would see.
+
+| Data | Source | Where it goes |
+|---|---|---|
+| Public image metadata from search results — thumbnail URL, large-image URL, source page URL, title / alt text, dimensions | Read from the search page Wisp opens (Pinterest, Huaban) or from the platform's public search API (ArtStation, sent without your cookies) | Returned to the desktop app so it can display and, if you choose, download the references. |
+| For Huaban only: the thumbnail image bytes | Fetched by the extension from Huaban's image CDN (which only serves the image to a real logged-in browser, so the desktop app cannot fetch it directly) and inlined as base64 | Returned to the desktop app, which writes the thumbnail to its local reference cache. Never sent anywhere else. |
+
+### 3. Reading your own creator stats (`creator.fetch_stats`)
+
+When you ask the desktop app to refresh your dashboard, Wisp opens **your
+own** creator-center page on a platform you are logged into (e.g. Bilibili,
+Pixiv) and reads the analytics that page loads about your account.
+
+| Data | Source | Where it goes |
+|---|---|---|
+| Your own public creator metrics (views, likes, followers, etc.) and your account ID on that platform | The JSON responses your creator-center page already requests, observed on the tab Wisp opens | Returned to the desktop app and stored locally on your machine. Never sent to a third party. |
+
+### Identifier stored across sessions
+
+| Data | Source | Where it goes |
+|---|---|---|
+| A randomly-generated per-profile ID (`wp_<uuid>`) | Generated and stored in `chrome.storage.local` | Sent to the desktop app on handshake so it can recognize repeat connections from the same browser profile. Not linked to any platform account, real-world identity, or analytics system. |
+
+## What the extension does NOT handle
+
+- Your passwords, cookies, session tokens, or platform credentials — Wisp
+  never reads or stores them.
+- Tabs you opened yourself — Wisp only acts on tabs it opens for a request.
+- Anything in the background — Wisp does nothing without a request you
+  initiated from the desktop app.
+- Browsing history.
 
 ## Where data goes
 
-- **All data flows are local.** The desktop app (Nephele Workshop) runs
-  on the same machine. Wisp connects to it via Chrome Native Messaging,
-  which Chrome restricts to processes the user has explicitly allowed.
-- **No external servers, no analytics, no telemetry.** The extension
-  does not contact any host other than the platforms listed in
-  `host_permissions` (and only to drive the upload form you initiated)
-  and the local asset server on `127.0.0.1`.
-- **The desktop app's own privacy is governed by Nephele Workshop's
-  privacy policy** at <https://arisfusion.com/privacy>. Wisp itself is
-  a passive bridge — anything that leaves your machine does so through
-  the desktop app, not the extension.
+- **All data flows are local.** Wisp returns everything to the Nephele
+  Workshop desktop app on the same machine, over Native Messaging
+  (restricted by the browser to a host you explicitly installed) and the
+  local asset server on `127.0.0.1`.
+- **No servers of our own, no analytics, no telemetry.** The only hosts the
+  extension contacts are (a) the platform domains listed in
+  `host_permissions`, in your session, to carry out the request you
+  initiated, and (b) the local asset server on `127.0.0.1`.
+- **The desktop app's own privacy** is governed by Nephele Workshop's
+  privacy policy at <https://arisfusion.com/privacy>. Wisp is the bridge;
+  anything that later leaves your machine does so through the desktop app,
+  under that policy, not through the extension.
 
 ## debugger permission
 
-Wisp uses Chrome's `debugger` API (`chrome.debugger`) to drive the
-upload form. Chrome shows a yellow "Nephele Wisp started debugging this
-browser" notification bar on every tab Wisp attaches to — this is the
-visible indicator that automation is happening. Wisp only attaches to
-tabs it has opened itself; it never attaches to tabs you opened
-manually.
+Wisp uses Chrome's `debugger` API (`chrome.debugger`) to drive forms and
+read pages in your session. Chrome shows a yellow "Nephele Wisp started
+debugging this browser" notification bar on every tab Wisp attaches to —
+the visible indicator that automation is happening. Wisp only attaches to
+tabs it opened itself for a request; it never attaches to tabs you opened.
 
 ## Data retention
 
-The only data Wisp retains across browser restarts is the per-profile
-ID (a UUID, stored in `chrome.storage.local`). Image bytes, captions,
-URLs, and tab references are held only for the lifetime of a single
-upload request and discarded on completion. Asset transfer tokens
-expire 5 minutes after issue and are single-use.
+The only data Wisp retains across browser restarts is the per-profile ID (a
+UUID in `chrome.storage.local`). Image bytes, captions, URLs, scraped
+metadata, stats, and tab references are held only for the lifetime of the
+single request that produced them and discarded on completion. Asset
+transfer tokens expire 5 minutes after issue and are single-use.
 
 ## Children
 
@@ -72,10 +110,9 @@ artists. The extension itself does not collect age data.
 ## Contact
 
 Source code is open at <https://github.com/CreatorAris/nephele-wisp>
-(MIT). Security disclosures and questions:
-**arisyingying13@gmail.com**.
+(MIT). Security disclosures and questions: **arisyingying13@gmail.com**.
 
 ## Changes
 
-Material changes to this policy will be reflected in this document and
-in the extension's release notes.
+Material changes to this policy are reflected in this document and in the
+extension's release notes.

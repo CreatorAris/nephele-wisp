@@ -30,7 +30,6 @@
     "storage",
     "debugger",
     "tabs",
-    "scripting",
     "alarms"
   ],
   "host_permissions": [
@@ -43,13 +42,7 @@
     "*://*.x.com/*",
     "*://*.twitter.com/*",
     "*://*.artstation.com/*",
-    "*://*.threads.net/*",
-    "*://*.lofter.com/*",
-    "*://*.bahamut.com.tw/*",
-    "*://*.skeb.jp/*",
-    "*://*.deviantart.com/*",
     "*://*.pinterest.com/*",
-    "*://*.pinimg.com/*",
     "*://*.huaban.com/*",
     "http://127.0.0.1/*"
   ],
