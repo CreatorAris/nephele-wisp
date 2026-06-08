@@ -183,9 +183,12 @@ Before clicking submit:
 - [ ] Store artifact built with `python scripts/pack.py` (NOT a raw zip) so
       the dev-only `system.eval` probe is stripped; confirm the zip contains
       no `system.eval`.
-- [ ] Chrome Web Store data-use form filled: declares Website content
-      (reference search) and the user's own account data (creator stats),
-      collected locally and not sold/transferred.
+- [ ] Store data-use form filled: declares NO data collection. The
+      extension only reads pages on the user's behalf and hands the result
+      to the local desktop app over Native Messaging (on-device IPC) — it
+      transmits nothing off-device or to us, so under both stores' "collect"
+      definition (transmit off-device / to the developer) nothing is
+      collected. Privacy policy clarifies local-only processing.
 - [ ] Smoke test passes against a logged-in profile for the shipped
       publisher platforms.
 - [ ] Nephele Workshop NMH register flow tested in a Nuitka build (not just
