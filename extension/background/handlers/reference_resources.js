@@ -13,11 +13,16 @@ import { withCdpTab } from '../cdp.js';
 import { sleep, preActionDelay } from '../humanize.js';
 
 const DEFAULT_SCROLL_ROUNDS = 3;
-const DEFAULT_MAX_ITEMS = 24;
+const DEFAULT_MAX_ITEMS = 48;
 const DEFAULT_NAV_TIMEOUT_MS = 30_000;
-const DEFAULT_TOTAL_INLINE_BYTES = 520_000;
-const DEFAULT_PER_IMAGE_BYTES = 140_000;
+// We now inline only small THUMBNAILS (the picker shows these; full images
+// are fetched on-select via reference.fetch_full over the HTTP ingest
+// channel). Thumbs are ~6-10 KB so dozens fit under the 1 MB NM frame.
+const DEFAULT_TOTAL_INLINE_BYTES = 900_000;
+const THUMB_MAX_EDGE = 256;
+const THUMB_QUALITY = 0.62;
 const PER_IMAGE_FETCH_TIMEOUT_MS = 12_000;
+const FULL_FETCH_TIMEOUT_MS = 20_000;
 
 function _arrayBufferToBase64(buf) {
     const bytes = new Uint8Array(buf);
@@ -27,6 +32,23 @@ function _arrayBufferToBase64(buf) {
         binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
     }
     return btoa(binary);
+}
+
+// Downscale an image blob to a small JPEG thumbnail (SW-side, OffscreenCanvas).
+async function _makeThumb(blob) {
+    const bmp = await createImageBitmap(blob);
+    const ow = bmp.width || THUMB_MAX_EDGE;
+    const oh = bmp.height || THUMB_MAX_EDGE;
+    const scale = Math.min(1, THUMB_MAX_EDGE / Math.max(ow, oh));
+    const w = Math.max(1, Math.round(ow * scale));
+    const h = Math.max(1, Math.round(oh * scale));
+    const canvas = new OffscreenCanvas(w, h);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bmp, 0, 0, w, h);
+    try { bmp.close(); } catch (_) {}
+    const out = await canvas.convertToBlob({ type: 'image/jpeg', quality: THUMB_QUALITY });
+    const buf = await out.arrayBuffer();
+    return { b64: _arrayBufferToBase64(buf), mime: 'image/jpeg', bytes: buf.byteLength, w: ow, h: oh };
 }
 
 function _normalizeUrl(url, baseUrl) {
@@ -218,26 +240,35 @@ export async function extractPageResources(payload) {
                     skipped.push({ url: item.url, reason: 'not_image', content_type: ctype });
                     continue;
                 }
-                const ab = await resp.arrayBuffer();
-                if (!ab.byteLength) {
+                const blob = await resp.blob();
+                if (!blob.size) {
                     skipped.push({ url: item.url, reason: 'empty' });
                     continue;
                 }
-                if (ab.byteLength > perImageLimit) {
-                    skipped.push({ url: item.url, reason: 'too_large', bytes: ab.byteLength });
+                // Inline a small THUMBNAIL only — the full image is fetched
+                // on-select via reference.fetch_full (HTTP ingest channel), so
+                // there is no per-full-image size cap and dozens fit per frame.
+                let thumb;
+                try {
+                    thumb = await _makeThumb(blob);
+                } catch (e) {
+                    skipped.push({ url: item.url, reason: 'thumb_failed', message: e?.message || String(e) });
                     continue;
                 }
-                if (totalBytes + ab.byteLength > totalInlineLimit) {
-                    skipped.push({ url: item.url, reason: 'response_budget_exceeded', bytes: ab.byteLength });
+                if (totalBytes + thumb.bytes > totalInlineLimit) {
+                    skipped.push({ url: item.url, reason: 'thumb_budget_exceeded', bytes: thumb.bytes });
                     continue;
                 }
-                totalBytes += ab.byteLength;
+                totalBytes += thumb.bytes;
                 items.push({
                     ...item,
-                    thumb_url: item.url,
-                    image_b64: _arrayBufferToBase64(ab),
-                    image_mime: resp.headers.get('content-type') || 'image/jpeg',
-                    image_bytes: ab.byteLength,
+                    // url stays = the FULL image URL (download-on-select).
+                    thumb_b64: thumb.b64,
+                    image_b64: thumb.b64,  // back-compat field name; carries the thumb
+                    image_mime: thumb.mime,
+                    image_bytes: thumb.bytes,
+                    full_bytes: blob.size,
+                    is_thumb: true,
                 });
             } catch (e) {
                 skipped.push({
@@ -257,4 +288,66 @@ export async function extractPageResources(payload) {
             inline_bytes: totalBytes,
         };
     }, { keepTab: false, active: false });
+}
+
+/*
+ * reference.fetch_full — fetch FULL-resolution images the user picked, in
+ * the user's real session (so anti-bot / cookie-gated CDNs serve them), and
+ * stream the bytes back to the UI over the out-of-band HTTP ingest channel
+ * (POST to http://127.0.0.1:<port>/wisp/ingest/<token>), bypassing the NM
+ * 1 MB frame cap entirely. No CDP tab needed — these are plain authenticated
+ * fetches from the extension/page-cookie context.
+ *
+ * payload: { items: [{ url, ingest_url }, ...] }
+ * returns: { results: [{ url, ok, bytes?, mime?, reason? }], ok_count, total }
+ */
+export async function fetchFullImages(payload) {
+    const reqItems = Array.isArray(payload?.items) ? payload.items.slice(0, 80) : [];
+    const results = [];
+    for (const it of reqItems) {
+        const url = String(it?.url || '');
+        const ingestUrl = String(it?.ingest_url || '');
+        if (!/^https?:\/\//i.test(url) || !/^http:\/\/127\.0\.0\.1[:/]/.test(ingestUrl)) {
+            results.push({ url, ok: false, reason: 'bad_item' });
+            continue;
+        }
+        try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), FULL_FETCH_TIMEOUT_MS);
+            let resp;
+            try {
+                resp = await fetch(url, { credentials: 'include', signal: controller.signal });
+            } finally {
+                clearTimeout(timer);
+            }
+            if (!resp.ok) {
+                results.push({ url, ok: false, reason: `http_${resp.status}` });
+                continue;
+            }
+            const buf = await resp.arrayBuffer();
+            if (!buf.byteLength) {
+                results.push({ url, ok: false, reason: 'empty' });
+                continue;
+            }
+            const mime = resp.headers.get('content-type') || 'image/jpeg';
+            const post = await fetch(ingestUrl, {
+                method: 'POST',
+                body: buf,
+                headers: { 'Content-Type': mime },
+            });
+            if (!post.ok) {
+                results.push({ url, ok: false, reason: `ingest_${post.status}` });
+                continue;
+            }
+            results.push({ url, ok: true, bytes: buf.byteLength, mime });
+        } catch (e) {
+            results.push({
+                url,
+                ok: false,
+                reason: e?.name === 'AbortError' ? 'timeout' : 'fetch_failed',
+                message: e?.message || String(e),
+            });
+        }
+    }
+    return { results, ok_count: results.filter((r) => r.ok).length, total: results.length };
 }

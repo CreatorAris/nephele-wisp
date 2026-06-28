@@ -31,7 +31,7 @@ import { fetchPixivStats } from './handlers/creator_pixiv.js';
 import { fetchPinterestReferences } from './handlers/reference_pinterest.js';
 import { fetchArtstationReferences } from './handlers/reference_artstation.js';
 import { fetchHuabanReferences } from './handlers/reference_huaban.js';
-import { extractPageResources } from './handlers/reference_resources.js';
+import { extractPageResources, fetchFullImages } from './handlers/reference_resources.js';
 import { readPage, interactPage } from './handlers/browser_read.js';
 
 const NMH_NAME = 'com.arisfusion.nephele_wisp';
@@ -255,6 +255,14 @@ function routeRequest(msg) {
             // headless, and returns browser-fetched inline image bytes
             // within the Native Messaging frame budget.
             dispatchAsync(msg, extractPageResources);
+            return;
+
+        case 'reference.fetch_full':
+            // On-select: fetch the FULL-res images the user picked (in their
+            // real session) and stream the bytes back over the HTTP ingest
+            // channel — breaks the NM 1 MB cap. Paired with the thumbnails
+            // reference.extract_resources now returns.
+            dispatchAsync(msg, fetchFullImages);
             return;
 
         case 'browser.read_page':

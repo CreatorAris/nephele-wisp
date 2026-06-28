@@ -263,8 +263,19 @@ are READ-ONLY namespaces — no DOM mutation, no form fills (writes stay in
 | `reference.fetch_pinterest` | neph → ext | scrape a Pinterest search grid |
 | `reference.fetch_artstation` | neph → ext | scrape an ArtStation search |
 | `reference.fetch_huaban` | neph → ext | scrape a Huaban (花瓣) search |
-| `reference.extract_resources` | neph → ext | harvest+inline a page's images |
+| `reference.extract_resources` | neph → ext | harvest a page's images as small thumbnails (full URL kept) |
+| `reference.fetch_full` | neph → ext | fetch picked full-res images, stream bytes via HTTP ingest |
 | `browser.read_page` | neph → ext | navigate any URL + extract page content |
+
+`reference.extract_resources` returns each item with a small inline JPEG
+**thumbnail** (`image_b64`/`thumb_b64`, ~6–10 KB) for the picker plus `url`
+= the full image URL; dozens fit under the 1 MB frame. On selection,
+`reference.fetch_full({ items: [{ url, ingest_url }] })` re-fetches each
+full image in the user's session and POSTs the bytes to the UI's one-time
+`ingest_url` (`http://127.0.0.1:<port>/wisp/ingest/<token>`), bypassing the
+Native Messaging 1 MB cap. Returns `{ results: [{ url, ok, bytes?, mime?,
+reason? }], ok_count, total }` — the bytes themselves travel over HTTP, not
+the NM frame.
 | `browser.interact` | neph → ext | navigate + click/type/scroll/press/wait sequence + extract |
 
 #### `browser.read_page` payload
