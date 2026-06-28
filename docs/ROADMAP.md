@@ -136,6 +136,24 @@ version is planned.
 Narrative AI reports, growth funnel analytics, post-type effectiveness
 attribution. Scope defined closer to kickoff.
 
+## Read-side capabilities (shipped incrementally)
+
+Read-only scraping that runs in the user's real browser, added alongside
+the versioned features above (contract in `docs/PROTOCOL.md`):
+
+- `reference.*` — agent-driven scrape of discovery surfaces (Pinterest /
+  ArtStation / Huaban search grids) + `reference.extract_resources`
+  (harvest a page's images).
+- `browser.read_page` — open a single arbitrary URL in an ephemeral
+  background tab and return a normalized text/links/structured snapshot.
+  Backs the desktop `wisp_read_page` agent tool as its highest tier
+  (desktop falls back to a persistent profile, then anonymous headless).
+
+These are read-only by contract (no clicks, no form fills — writes stay
+in `publisher.*`) and stay strictly within the Non-goals boundary below:
+each call reads only a single page the user could open themselves, not a
+bulk harvest of others' content.
+
 ## Non-goals (permanent)
 
 These are out of scope regardless of demand:

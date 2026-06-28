@@ -77,7 +77,8 @@ lifetime of the browser connection.
 
 NMH enforces which request type namespaces are forwarded:
 
-- Forwarded: `publisher.*`, `creator.*`, `inbox.*`, `scheduler.*`
+- Forwarded: `publisher.*`, `creator.*`, `reference.*`, `browser.*`,
+  `inbox.*`, `scheduler.*`
 - Local (NMH-handled): `system.*`
 - Anything else: `INVALID_PAYLOAD` (rejected at NMH layer — prevents
   extension/UI schema drift from silently opening new attack surface)
@@ -250,6 +251,58 @@ Scope: inbox (comments + DMs), scheduled publishing.
 | `inbox.reply` | neph → ext | post a user-composed reply |
 | `inbox.new_message` | ext → neph | push notification |
 | `scheduler.execute` | neph → ext | run a pre-scheduled publish now |
+
+### reference.* / browser.* — read-side scraping
+
+Scope: read public/authenticated pages in the user's real browser. These
+are READ-ONLY namespaces — no DOM mutation, no form fills (writes stay in
+`publisher.*`). All run in ephemeral background tabs.
+
+| Type | Direction | Purpose |
+|---|---|---|
+| `reference.fetch_pinterest` | neph → ext | scrape a Pinterest search grid |
+| `reference.fetch_artstation` | neph → ext | scrape an ArtStation search |
+| `reference.fetch_huaban` | neph → ext | scrape a Huaban (花瓣) search |
+| `reference.extract_resources` | neph → ext | harvest+inline a page's images |
+| `browser.read_page` | neph → ext | navigate any URL + extract page content |
+
+#### `browser.read_page` payload
+
+```json
+{
+    "url": "https://...",          // required, http(s)
+    "max_chars": 6000,             // readable-text cap (200–20000)
+    "max_links": 60,               // 0–200
+    "max_images": 0,               // 0–120; 0 = skip image harvest
+    "scroll_rounds": 2,            // 0–8 lazy-load scroll passes
+    "selectors": ["h1", ".price"], // optional CSS structured extraction
+    "include_html": false,         // include raw outerHTML (capped ≤200KB)
+    "nav_timeout_ms": 30000
+}
+```
+
+#### `browser.read_page` result
+
+```json
+{
+    "final_url": "...", "title": "...",
+    "text": "readable text (≤max_chars)", "text_truncated": false,
+    "full_text_length": 0, "word_count": 0,
+    "links": [{ "href": "...", "text": "..." }], "links_count": 0,
+    "images": [{ "src": "...", "alt": "...", "w": 0, "h": 0 }],
+    "structured": { "<selector>": [{ "text": "...", "href": "...", "src": "..." }] },
+    "meta": { "description": "...", "og:title": "..." },
+    "login_required": false,
+    "html": "..."                  // only when include_html=true
+}
+```
+
+`login_required` is set when the page is dominated by a visible password
+form (short body text) — the desktop side treats this as "not readable
+here" and escalates to its next browser tier. The desktop persistent /
+headless fallback tiers produce this IDENTICAL result shape via
+`core/browser/page_reader.py` `CANONICAL_READ_JS`; keep the two extractors
+in sync when either changes.
 
 Versioning rule: additive changes (new types, new optional fields) do
 NOT bump `v`. Removing types or changing semantics of existing fields

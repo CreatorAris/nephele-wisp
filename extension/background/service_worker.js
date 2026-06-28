@@ -31,6 +31,8 @@ import { fetchPixivStats } from './handlers/creator_pixiv.js';
 import { fetchPinterestReferences } from './handlers/reference_pinterest.js';
 import { fetchArtstationReferences } from './handlers/reference_artstation.js';
 import { fetchHuabanReferences } from './handlers/reference_huaban.js';
+import { extractPageResources } from './handlers/reference_resources.js';
+import { readPage } from './handlers/browser_read.js';
 
 const NMH_NAME = 'com.arisfusion.nephele_wisp';
 const PROTOCOL_VERSION = 1;
@@ -245,6 +247,23 @@ function routeRequest(msg) {
             // base64 in the response. Bytes shipped per call ~500KB
             // (capped at 40 items × ~20KB base64).
             dispatchAsync(msg, fetchHuabanReferences);
+            return;
+
+        case 'reference.extract_resources':
+            // Generic "save/download images from this webpage" path.
+            // Runs in the user's real browser session, not Playwright
+            // headless, and returns browser-fetched inline image bytes
+            // within the Native Messaging frame budget.
+            dispatchAsync(msg, extractPageResources);
+            return;
+
+        case 'browser.read_page':
+            // Generic authenticated page READ — open any URL in an
+            // ephemeral background tab in the user's real browser and
+            // return a normalized text/links/structured snapshot. Read-only
+            // (no clicks/writes); writes stay in the audited publisher.*
+            // path. Backs the desktop wisp_read_page tool's Tier 1.
+            dispatchAsync(msg, readPage);
             return;
 
         // Removed: 'inbox.fetch_comments', 'inbox.reply', 'scheduler.execute'

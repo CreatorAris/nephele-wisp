@@ -65,11 +65,16 @@ export class CdpSession {
         // can re-attach via _ensureAttached().
         if (!this._detachListenerInstalled) {
             this._detachListenerInstalled = true;
-            chrome.debugger.onDetach.addListener((src, _reason) => {
+            // Keep a reference so detach() can remove it — otherwise every
+            // CdpSession leaks a listener (and the session it closes over) for
+            // the SW's lifetime, and every unrelated tab-close fires all of
+            // them. Matters under many reads (manual testing / agent loops).
+            this._onDetachListener = (src, _reason) => {
                 if (src && src.tabId === this.tabId) {
                     this.attached = false;
                 }
-            });
+            };
+            chrome.debugger.onDetach.addListener(this._onDetachListener);
         }
         // Enable the domains we use. Order matters for DOM.enable —
         // must be on before DOM.querySelector calls.
@@ -84,13 +89,22 @@ export class CdpSession {
     }
 
     async detach() {
-        if (!this.attached) return;
-        try {
-            await new Promise((resolve) => {
-                chrome.debugger.detach(this.target, () => resolve());
-            });
-        } catch (_) { /* ignore */ }
-        this.attached = false;
+        if (this.attached) {
+            try {
+                await new Promise((resolve) => {
+                    chrome.debugger.detach(this.target, () => resolve());
+                });
+            } catch (_) { /* ignore */ }
+            this.attached = false;
+        }
+        // Always remove the onDetach listener — even when attached is already
+        // false (the debugger may have been detached out from under us, which
+        // sets attached=false but leaves the listener registered).
+        if (this._onDetachListener) {
+            chrome.debugger.onDetach.removeListener(this._onDetachListener);
+            this._onDetachListener = null;
+            this._detachListenerInstalled = false;
+        }
     }
 
     // Raw CDP command. Throws on error. Auto-reattaches once on
