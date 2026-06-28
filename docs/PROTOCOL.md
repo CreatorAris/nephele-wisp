@@ -265,6 +265,7 @@ are READ-ONLY namespaces — no DOM mutation, no form fills (writes stay in
 | `reference.fetch_huaban` | neph → ext | scrape a Huaban (花瓣) search |
 | `reference.extract_resources` | neph → ext | harvest+inline a page's images |
 | `browser.read_page` | neph → ext | navigate any URL + extract page content |
+| `browser.interact` | neph → ext | navigate + click/type/scroll/press/wait sequence + extract |
 
 #### `browser.read_page` payload
 
@@ -306,6 +307,31 @@ desktop `wisp_harvest` tool drives this for feed/grid/search collection.
     "html": "..."                  // only when include_html=true
 }
 ```
+
+#### `browser.interact` payload
+
+Same shape as `browser.read_page` plus an `actions` sequence run after
+navigation, before extraction. The result is the same read/harvest shape
+(with an added `action_log`).
+
+```json
+{
+    "url": "https://...",
+    "actions": [
+        { "op": "type", "selector": "input[name=q]", "text": "...", "submit": true },
+        { "op": "click", "selector": "a.morelink" },
+        { "op": "scroll", "amount": 3 },
+        { "op": "press", "key": "Enter" },
+        { "op": "wait", "ms": 1000 }
+    ],
+    "item_selector": ".result", "max_items": 20
+}
+```
+
+Ops: `click` / `type` / `press` / `scroll` / `wait` (max 20 steps).
+Read-oriented (search / submit / paginate / filter); account writes
+(post/like/follow) stay in `publisher.*`. `click`/`type` failures are
+returned honestly (`DOM_NOT_FOUND`), not papered over.
 
 `login_required` is set when the page is dominated by a visible password
 form (short body text) — the desktop side treats this as "not readable

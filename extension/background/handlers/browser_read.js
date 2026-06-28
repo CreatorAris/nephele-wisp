@@ -31,11 +31,30 @@ const HARD_MAX_CHARS = 20_000;
 const HARD_MAX_LINKS = 200;
 const HARD_MAX_IMAGES = 120;
 const HARD_SCROLL_ROUNDS = 8;
+const HARD_MAX_ITEMS = 200;
+const HARD_MAX_ACTIONS = 20;
 
 function clampInt(v, lo, hi, dflt) {
     const n = parseInt(v, 10);
     if (!Number.isFinite(n)) return dflt;
     return Math.max(lo, Math.min(hi, n));
+}
+
+// Build the in-page extractor opts from an RPC payload. Shared by readPage
+// and interactPage so item-harvest params reach the extractor on both paths.
+function buildExtractOpts(payload) {
+    return {
+        maxChars: clampInt(payload?.max_chars, 200, HARD_MAX_CHARS, DEFAULT_MAX_CHARS),
+        maxLinks: clampInt(payload?.max_links, 0, HARD_MAX_LINKS, DEFAULT_MAX_LINKS),
+        maxImages: clampInt(payload?.max_images, 0, HARD_MAX_IMAGES, DEFAULT_MAX_IMAGES),
+        selectors: Array.isArray(payload?.selectors)
+            ? payload.selectors.filter((s) => typeof s === 'string' && s.trim()).slice(0, 12)
+            : [],
+        includeHtml: !!payload?.include_html,
+        itemSelector: String(payload?.item_selector || '').trim(),
+        itemFields: (payload?.item_fields && typeof payload.item_fields === 'object') ? payload.item_fields : {},
+        maxItems: clampInt(payload?.max_items, 1, HARD_MAX_ITEMS, 40),
+    };
 }
 
 // Self-contained in-page extractor. Serialized via session.evaluateFn and
@@ -267,15 +286,7 @@ export async function readPage(payload) {
 
     const navTimeout = clampInt(payload?.nav_timeout_ms, 3000, 60_000, DEFAULT_NAV_TIMEOUT_MS);
     const scrollRounds = clampInt(payload?.scroll_rounds, 0, HARD_SCROLL_ROUNDS, DEFAULT_SCROLL_ROUNDS);
-    const extractOpts = {
-        maxChars: clampInt(payload?.max_chars, 200, HARD_MAX_CHARS, DEFAULT_MAX_CHARS),
-        maxLinks: clampInt(payload?.max_links, 0, HARD_MAX_LINKS, DEFAULT_MAX_LINKS),
-        maxImages: clampInt(payload?.max_images, 0, HARD_MAX_IMAGES, DEFAULT_MAX_IMAGES),
-        selectors: Array.isArray(payload?.selectors)
-            ? payload.selectors.filter((s) => typeof s === 'string' && s.trim()).slice(0, 12)
-            : [],
-        includeHtml: !!payload?.include_html,
-    };
+    const extractOpts = buildExtractOpts(payload);
 
     return await withCdpTab(url, async (session) => {
         try {
@@ -301,6 +312,82 @@ export async function readPage(payload) {
         }
 
         const data = await session.evaluateFn(__wispExtractPage, [extractOpts]);
+        return data || {};
+    }, { keepTab: false, active: false });
+}
+
+// browser.interact — navigate, run a click/type/press/scroll/wait sequence,
+// then extract the resulting page. Read-oriented (search/submit/paginate);
+// account writes stay in publisher.*. Uses the humanized CdpSession verbs.
+export async function interactPage(payload) {
+    const url = String(payload?.url || '').trim();
+    if (!/^https?:\/\//i.test(url)) {
+        const err = new Error('INVALID_PAYLOAD: url must start with http(s)');
+        err.code = 'INVALID_PAYLOAD';
+        throw err;
+    }
+    const navTimeout = clampInt(payload?.nav_timeout_ms, 3000, 60_000, DEFAULT_NAV_TIMEOUT_MS);
+    const scrollRounds = clampInt(payload?.scroll_rounds, 0, HARD_SCROLL_ROUNDS, 0);
+    const extractOpts = buildExtractOpts(payload);
+    const actions = Array.isArray(payload?.actions) ? payload.actions.slice(0, HARD_MAX_ACTIONS) : [];
+
+    return await withCdpTab(url, async (session) => {
+        try {
+            await session.navigate(url, { timeoutMs: navTimeout });
+        } catch (e) {
+            const msg = (e && e.message) || String(e);
+            const isTimeout = /^TIMEOUT/i.test(msg);
+            const err = new Error(isTimeout ? msg : `page navigation failed: ${msg}`);
+            err.code = isTimeout ? 'TIMEOUT' : ((e && e.code) || 'INTERNAL');
+            throw err;
+        }
+
+        const actionLog = [];
+        for (const step of actions) {
+            const op = String((step && step.op) || '').toLowerCase();
+            try {
+                if (op === 'click') {
+                    await session.click(step.selector);
+                } else if (op === 'type') {
+                    await session.type(step.selector, String(step.text || ''));
+                    if (step.submit) await session.press('Enter');
+                } else if (op === 'press') {
+                    await session.press(String(step.key || 'Enter'));
+                } else if (op === 'scroll') {
+                    const n = clampInt(step.amount, 1, 10, 1);
+                    for (let i = 0; i < n; i++) {
+                        await session.evaluateFn(() => { window.scrollBy(0, window.innerHeight * 0.9); });
+                        await sleep(500);
+                    }
+                } else if (op === 'wait') {
+                    await sleep(clampInt(step.ms, 0, 8000, 500));
+                } else {
+                    actionLog.push({ op, ok: false, detail: 'unknown op' });
+                    continue;
+                }
+                actionLog.push({ op, ok: true });
+            } catch (e) {
+                actionLog.push({ op, ok: false, detail: (e && e.message) || String(e) });
+                // click/type failures are real (bad selector) — fail honestly.
+                if (op === 'click' || op === 'type') {
+                    const err = new Error(`action ${op} failed: ${(e && e.message) || e}`);
+                    err.code = 'DOM_NOT_FOUND';
+                    err.data = { action_log: actionLog };
+                    throw err;
+                }
+            }
+            await sleep(200);
+        }
+
+        for (let i = 0; i < scrollRounds; i++) {
+            try {
+                await session.evaluateFn(() => { window.scrollBy(0, window.innerHeight * 0.9); });
+            } catch (_) { /* best-effort */ }
+            await sleep(550 + Math.floor(Math.random() * 350));
+        }
+
+        const data = await session.evaluateFn(__wispExtractPage, [extractOpts]);
+        if (data && typeof data === 'object') data.action_log = actionLog;
         return data || {};
     }, { keepTab: false, active: false });
 }

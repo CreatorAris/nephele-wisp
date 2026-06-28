@@ -32,7 +32,7 @@ import { fetchPinterestReferences } from './handlers/reference_pinterest.js';
 import { fetchArtstationReferences } from './handlers/reference_artstation.js';
 import { fetchHuabanReferences } from './handlers/reference_huaban.js';
 import { extractPageResources } from './handlers/reference_resources.js';
-import { readPage } from './handlers/browser_read.js';
+import { readPage, interactPage } from './handlers/browser_read.js';
 
 const NMH_NAME = 'com.arisfusion.nephele_wisp';
 const PROTOCOL_VERSION = 1;
@@ -264,6 +264,14 @@ function routeRequest(msg) {
             // (no clicks/writes); writes stay in the audited publisher.*
             // path. Backs the desktop wisp_read_page tool's Tier 1.
             dispatchAsync(msg, readPage);
+            return;
+
+        case 'browser.interact':
+            // Scripted navigation — navigate then run a click/type/scroll/
+            // press/wait sequence (search / submit / paginate) and read the
+            // result. Read-oriented; account writes stay in publisher.*.
+            // Backs wisp_interact's Tier 1.
+            dispatchAsync(msg, interactPage);
             return;
 
         // Removed: 'inbox.fetch_comments', 'inbox.reply', 'scheduler.execute'
