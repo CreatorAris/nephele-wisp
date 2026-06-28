@@ -277,9 +277,16 @@ are READ-ONLY namespaces — no DOM mutation, no form fills (writes stay in
     "scroll_rounds": 2,            // 0–8 lazy-load scroll passes
     "selectors": ["h1", ".price"], // optional CSS structured extraction
     "include_html": false,         // include raw outerHTML (capped ≤200KB)
-    "nav_timeout_ms": 30000
+    "nav_timeout_ms": 30000,
+    "item_selector": ".pin",       // optional: bounded harvest — collect items
+    "item_fields": { "title": "h3", "author": ".by" },  // per-item sub-fields
+    "max_items": 40                // 1–200 hard cap (browse-normal scale)
 }
 ```
+
+When `item_selector` is set, the handler also harvests each matching
+element as an item (deduped by content link; capped at `max_items`). The
+desktop `wisp_harvest` tool drives this for feed/grid/search collection.
 
 #### `browser.read_page` result
 
@@ -291,8 +298,11 @@ are READ-ONLY namespaces — no DOM mutation, no form fills (writes stay in
     "links": [{ "href": "...", "text": "..." }], "links_count": 0,
     "images": [{ "src": "...", "alt": "...", "w": 0, "h": 0 }],
     "structured": { "<selector>": [{ "text": "...", "href": "...", "src": "..." }] },
+    "items": [{ "text": "...", "href": "...", "img": "...", "<field>": "..." }],
+    "items_count": 0,
     "meta": { "description": "...", "og:title": "..." },
     "login_required": false,
+    "antibot_challenge": false,    // Cloudflare/etc interstitial detected
     "html": "..."                  // only when include_html=true
 }
 ```

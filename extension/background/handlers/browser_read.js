@@ -54,10 +54,17 @@ function __wispExtractPage(opts) {
 
     let text = '';
     try {
-        const root = document.querySelector('main')
-            || document.querySelector('article')
-            || document.querySelector('[role="main"]')
-            || document.body;
+        const CONTENT_SELS = [
+            '[itemprop="articleBody"]', '.mw-parser-output', '#mw-content-text',
+            '.post-content', '.entry-content', '.article-body', '.article-content',
+            'article', '[role="main"]', 'main',
+        ];
+        let root = null;
+        for (const sel of CONTENT_SELS) {
+            const el = document.querySelector(sel);
+            if (el && (el.innerText || '').length >= 200) { root = el; break; }
+        }
+        if (!root) root = document.body;
         if (root) text = root.innerText || root.textContent || '';
     } catch (_) { text = ''; }
     text = text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
@@ -125,6 +132,45 @@ function __wispExtractPage(opts) {
         structured[sel] = rows;
     }
 
+    // item harvest: collect cards/rows matching itemSelector (deduped,
+    // capped — bounded "browse normally" scrape, not bulk).
+    const items = [];
+    if (opts.itemSelector) {
+        try {
+            const maxItems = opts.maxItems || 40;
+            const fields = (opts.itemFields && typeof opts.itemFields === 'object') ? opts.itemFields : {};
+            const seenItem = new Set();
+            for (const node of Array.from(document.querySelectorAll(opts.itemSelector))) {
+                if (items.length >= maxItems) break;
+                // Prefer the first anchor WITH visible text (the content link)
+                // over a text-less icon/utility anchor (vote arrow, reply, etc).
+                const anchors = (node.matches && node.matches('a[href]')) ? [node] : Array.from(node.querySelectorAll('a[href]'));
+                let linkEl = null;
+                for (const a of anchors) { if ((a.textContent || '').trim()) { linkEl = a; break; } }
+                if (!linkEl && anchors.length) linkEl = anchors[0];
+                const href = linkEl ? abs(linkEl.getAttribute('href')) : '';
+                const imgEl = node.querySelector('img');
+                const img = imgEl ? abs(imgEl.currentSrc || imgEl.src || imgEl.getAttribute('data-src') || '') : '';
+                const txt = clean(node.innerText || node.textContent).slice(0, 300);
+                const key = href || (txt + '|' + img);
+                if (!key || seenItem.has(key)) continue;
+                seenItem.add(key);
+                const item = { text: txt, href, img };
+                for (const fname in fields) {
+                    try {
+                        const fe = node.querySelector(fields[fname]);
+                        if (!fe) { item[fname] = ''; continue; }
+                        const fhref = fe.getAttribute && fe.getAttribute('href');
+                        const fsrc = fe.getAttribute && (fe.getAttribute('src') || fe.getAttribute('data-src'));
+                        item[fname] = clean(fe.innerText || fe.textContent).slice(0, 200)
+                            || (fhref ? abs(fhref) : (fsrc ? abs(fsrc) : ''));
+                    } catch (_) { item[fname] = ''; }
+                }
+                items.push(item);
+            }
+        } catch (_) {}
+    }
+
     const meta = {};
     try {
         const pick = (q, key) => {
@@ -149,6 +195,22 @@ function __wispExtractPage(opts) {
         }
     } catch (_) {}
 
+    // Anti-bot interstitial probe (Cloudflare / DataDome / etc). A short page
+    // whose title+text matches a known challenge phrase is NOT real content —
+    // the desktop side escalates to a tier whose real browser passes the JS
+    // challenge instead of returning the "please wait" shell as a read.
+    let antibot = false;
+    try {
+        const probe = ((document.title || '') + ' ' + text).toLowerCase().slice(0, 600);
+        const markers = [
+            'just a moment', 'enable javascript and cookies', 'checking your browser',
+            'verifying you are human', 'verify you are human', 'attention required',
+            'cf-browser-verification', 'ddos protection by', 'please wait while',
+            'challenge-error-text', '请稍候', '请完成', '安全验证', '人机验证', '稍候片刻',
+        ];
+        if (wordCount < 80 && markers.some((m) => probe.includes(m))) antibot = true;
+    } catch (_) {}
+
     const out = {
         final_url: location.href,
         title: document.title || '',
@@ -160,8 +222,11 @@ function __wispExtractPage(opts) {
         links_count: links.length,
         images,
         structured,
+        items,
+        items_count: items.length,
         meta,
         login_required: loginRequired,
+        antibot_challenge: antibot,
     };
     if (includeHtml) {
         try { out.html = (document.documentElement.outerHTML || '').slice(0, 200000); } catch (_) { out.html = ''; }
@@ -181,6 +246,8 @@ function __wispExtractPage(opts) {
                 out.links = (out.links || []).slice(0, 80);
                 out.links_count = out.links.length;
                 out.images = (out.images || []).slice(0, 40);
+                out.items = (out.items || []).slice(0, 60);
+                out.items_count = out.items.length;
                 out.oversize_trimmed = true;
                 s = JSON.stringify(out);
             }
