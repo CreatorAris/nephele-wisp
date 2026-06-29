@@ -339,8 +339,10 @@ export async function extractPageResources(payload) {
  * 1 MB frame cap entirely. No CDP tab needed — these are plain authenticated
  * fetches from the extension/page-cookie context.
  *
- * payload: { items: [{ url, ingest_url }, ...] }
- * returns: { results: [{ url, ok, bytes?, mime?, reason? }], ok_count, total }
+ * payload: { items: [{ url, ingest_url, candidates? }, ...] }
+ *   candidates: desktop-computed best-first full-res URLs (canonical); if
+ *   absent, the extension's built-in _fullResCandidates(url) is used.
+ * returns: { results: [{ url, ok, used_url?, upgraded?, bytes?, mime?, reason? }], ok_count, total }
  */
 export async function fetchFullImages(payload) {
     const reqItems = Array.isArray(payload?.items) ? payload.items.slice(0, 80) : [];
@@ -353,11 +355,17 @@ export async function fetchFullImages(payload) {
             continue;
         }
         try {
-            // Try full-res URL candidates first, fall back to the original —
-            // gallery/profile pages only expose grid thumbnails, so the picked
-            // url is often a small image; the upgraded variant gets the real
-            // artwork, and a wrong guess (404 / non-image) just falls through.
-            const candidates = _fullResCandidates(url);
+            // Gallery/profile pages only expose grid thumbnails, so the picked
+            // url is often a small image; full-res candidates get the real
+            // artwork (a wrong guess 404s / non-image and falls through).
+            // Prefer desktop-computed candidates (canonical, evolves via self-
+            // update with no extension re-submit); fall back to the built-in
+            // rewriter for older desktops. `url` is always a final fallback.
+            let candidates = (Array.isArray(it.candidates) ? it.candidates : [])
+                .filter((c) => typeof c === 'string' && /^https?:\/\//i.test(c))
+                .slice(0, 8);
+            if (!candidates.length) candidates = _fullResCandidates(url);
+            if (!candidates.includes(url)) candidates.push(url);
             let resp = null;
             let usedUrl = url;
             for (const cand of candidates) {
