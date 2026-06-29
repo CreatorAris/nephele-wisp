@@ -68,6 +68,30 @@ function _isLikelyImageUrl(url) {
         || /(images?|thumb|cover|avatar|asset)/i.test(url);
 }
 
+// Full-resolution URL candidates from a (often grid-thumbnail) image URL,
+// best-first, with the ORIGINAL always last as a fallback. Pure URL rewriting
+// of known CDN size tokens — a light heuristic, not a per-platform extractor
+// (cf. find_references' Pixiv hi-res upgrade). fetch_full tries each in order
+// and falls back to the original if an upgraded URL 404s, so a wrong guess
+// never costs the user the image.
+export function _fullResCandidates(url) {
+    const out = [];
+    try {
+        const u = new URL(url);
+        // ArtStation / similar: .../<size>/<file> where size is a thumbnail
+        // token right before the filename → swap to 4k, then large.
+        const m = u.pathname.match(
+            /\/(micro_square|smaller_square|small_square|medium_square|larger_square|small|medium|thumb)\/([^/]+)$/);
+        if (m) {
+            for (const big of ['4k', 'large']) {
+                out.push(u.origin + u.pathname.replace(`/${m[1]}/${m[2]}`, `/${big}/${m[2]}`) + u.search);
+            }
+        }
+    } catch (_) { /* unparseable → just use the original */ }
+    out.push(url);
+    return Array.from(new Set(out));
+}
+
 export async function extractPageResources(payload) {
     const url = String(payload?.url || '').trim();
     if (!/^https?:\/\//i.test(url)) {
@@ -310,16 +334,33 @@ export async function fetchFullImages(payload) {
             continue;
         }
         try {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), FULL_FETCH_TIMEOUT_MS);
-            let resp;
-            try {
-                resp = await fetch(url, { credentials: 'include', signal: controller.signal });
-            } finally {
-                clearTimeout(timer);
+            // Try full-res URL candidates first, fall back to the original —
+            // gallery/profile pages only expose grid thumbnails, so the picked
+            // url is often a small image; the upgraded variant gets the real
+            // artwork, and a wrong guess (404 / non-image) just falls through.
+            const candidates = _fullResCandidates(url);
+            let resp = null;
+            let usedUrl = url;
+            for (const cand of candidates) {
+                const isLast = cand === candidates[candidates.length - 1];
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), isLast ? FULL_FETCH_TIMEOUT_MS : 8000);
+                try {
+                    const r = await fetch(cand, { credentials: 'include', signal: controller.signal });
+                    const ct = (r.headers.get('content-type') || '').toLowerCase();
+                    if (r.ok && (!ct || ct.startsWith('image/') || ct.includes('octet-stream'))) {
+                        resp = r;
+                        usedUrl = cand;
+                        break;
+                    }
+                } catch (_) {
+                    // upgraded guess failed → try the next candidate
+                } finally {
+                    clearTimeout(timer);
+                }
             }
-            if (!resp.ok) {
-                results.push({ url, ok: false, reason: `http_${resp.status}` });
+            if (!resp) {
+                results.push({ url, ok: false, reason: 'http_failed' });
                 continue;
             }
             const buf = await resp.arrayBuffer();
@@ -337,7 +378,7 @@ export async function fetchFullImages(payload) {
                 results.push({ url, ok: false, reason: `ingest_${post.status}` });
                 continue;
             }
-            results.push({ url, ok: true, bytes: buf.byteLength, mime });
+            results.push({ url, ok: true, used_url: usedUrl, upgraded: usedUrl !== url, bytes: buf.byteLength, mime });
         } catch (e) {
             results.push({
                 url,
