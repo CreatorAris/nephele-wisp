@@ -5,9 +5,13 @@ This document explains why each permission requested in
 Store / Edge Add-ons reviewers and for users who want to verify the
 extension does not request more than it needs.
 
-Every host permission below has a handler that uses it. We do not declare
-permissions for features that have not shipped; when a new platform handler
-lands, its host is added in the same release.
+Wisp requests broad host access (`<all_urls>`) because its job — acting in the
+user's own session on whatever site the user is working with — is inherently
+all-sites. The trust model is deliberately NOT "request a narrow scope" (the
+user browses everywhere; an enumerated list silently fails on the next site or
+CDN) but "request what the job needs, and constrain BEHAVIOUR tightly and
+verifiably" (see `docs/SECURITY.md`). Every action is user- or
+desktop-app-initiated; Wisp does nothing on its own.
 
 ## API permissions
 
@@ -81,29 +85,43 @@ persist and re-wake it.
 work and initiates no uploads or reads — those always require an explicit
 request from the desktop app.
 
-## Host permissions
+## Host permissions: `<all_urls>`
 
-Each host below has a handler that acts on it, in your logged-in session,
-only when you initiate a matching request from the desktop app. The request
-classes are: `publisher.upload_draft` (fill an upload form),
-`creator.fetch_stats` (read your own creator dashboard), and
-`reference.fetch_*` (collect reference images from a search).
+**Why broad access is required.** Wisp acts inside the user's logged-in
+session to do work the desktop app requests, on whatever site the user is
+working with. The request classes are:
 
-| Host | Handler(s) | Purpose |
-|---|---|---|
-| `*://*.bilibili.com/*` | `publisher_bilibili.js`, `creator_bilibili.js` | Bilibili dynamic-post draft upload; read your own creator stats |
-| `*://*.xiaohongshu.com/*` | `publisher_xiaohongshu.js` | Xiaohongshu image-note draft (creator subdomain) |
-| `*://*.weibo.com/*`, `*://*.weibo.cn/*` | `publisher_weibo.js` | Weibo image-post compose (desktop + mobile domains of the same platform) |
-| `*://*.douyin.com/*` | `publisher_douyin.js` | Douyin image-text draft |
-| `*://*.pixiv.net/*` | `publisher_pixiv.js`, `creator_pixiv.js` | Pixiv illust upload; read your own creator stats |
-| `*://*.x.com/*`, `*://*.twitter.com/*` | `publisher_twitter.js` | Twitter/X compose (both domains of the same platform) |
-| `*://*.artstation.com/*` | `publisher_artstation.js`, `reference_artstation.js` | ArtStation artwork submit; reference search via the public search API |
-| `*://*.pinterest.com/*` | `reference_pinterest.js` | Reference search — read pin-grid image metadata in your session |
-| `*://*.huaban.com/*` | `reference_huaban.js` | Reference search — read pin metadata and fetch thumbnails the CDN serves only to a real logged-in browser |
-| `http://127.0.0.1/*` | `asset.js` | Local-only asset transfer from Nephele Workshop's per-session asset server. Tokens are one-time, expire in 5 minutes, and the server binds 127.0.0.1 only. |
+- **`publisher.upload_draft`** — fill an upload / compose form on the platform
+  the user is publishing to (stops at "draft ready" for manual review).
+- **`creator.fetch_stats`** — read the user's own creator dashboard.
+- **`reference.*` / `browser.read_page` / `browser.interact`** — read a page,
+  collect reference images, or clip an image the user picked, from any site the
+  user is researching or collecting from.
 
-`host_permissions` is enumerated per platform — never `<all_urls>` — and
-expanded additively as handlers ship.
+These are not confined to a fixed platform list. A user researches references
+and clips images from anywhere on the web, and reference-image *bytes* live on
+per-platform CDN domains (`i.pximg.net`, `i.pinimg.com`, `pbs.twimg.com`, …)
+that differ from the site's own domain — so even an enumerated site list would
+silently fail to fetch the actual images. A fixed allow-list would break on the
+next site or CDN the user visits. Comparable reference/clipper tools (e.g.
+Eagle) request `<all_urls>` for exactly this reason.
+
+**Why this is safe — behaviour, not scope, is the real constraint.** Broad
+access is bounded by hard, repository-verifiable behavioural limits (see
+`docs/SECURITY.md`):
+
+- **No background or scheduled activity.** Every read / clip / form-fill
+  happens only in response to an action the user just initiated in the desktop
+  app, or a context-menu / keyboard clip the user invoked. Wisp never crawls.
+- **Visible.** `chrome.debugger` shows Chrome's persistent "Nephele Wisp
+  started debugging this browser" bar; Wisp attaches only to tabs it opened.
+- **No final writes without the user.** Publish / send always stops for manual
+  confirmation; Wisp never clicks the final button.
+- **Data stays local.** Read data returns only to the local Nephele desktop
+  app — never to a server of ours. No telemetry, no remote code.
+
+The local asset / ingest channel runs on `127.0.0.1` (one-time tokens, 5-min
+expiry, loopback-bound), covered by `<all_urls>`.
 
 ## Single purpose
 
@@ -111,12 +129,12 @@ Per the Chrome Web Store program policy, this extension has a single
 purpose:
 
 > Act as the browser-side half of the Nephele Workshop desktop application:
-> carry out the publishing-workflow requests the desktop app sends —
-> filling upload forms (and stopping at "draft ready" for manual review),
-> reading the user's own creator stats, and collecting reference images —
-> all inside the user's own logged-in browser session, and return the
-> results to the desktop app. The extension does nothing on its own; every
-> action originates from the desktop app.
+> carry out the requests the desktop app sends inside the user's own
+> logged-in browser session — filling upload forms (and stopping at "draft
+> ready" for manual review), reading the user's own creator stats, reading
+> pages, and collecting or clipping reference images — and return the results
+> to the desktop app. The extension does nothing on its own; every action
+> originates from the desktop app or a clip the user explicitly invoked.
 
 ## What Wisp will not do
 

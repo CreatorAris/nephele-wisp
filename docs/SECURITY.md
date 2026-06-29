@@ -69,11 +69,20 @@ it on cleanup. Wisp never disrupts the user's own tabs.
 ~30s idle, which would drop the Native Messaging connection; the alarm
 re-wakes the worker. `setInterval` cannot survive worker recycling.
 
-### `host_permissions`
-**Approach**: enumerated per platform, never `<all_urls>`. Every declared
-host has a handler that uses it; hosts are added in the release that ships
-their handler. Expanded additively. Justification submitted to the Store per
-domain on each update.
+### `host_permissions`: `<all_urls>`
+**Approach**: broad host access. Wisp acts in the user's session on whatever
+site they are working with — publishing, reading, and collecting/clipping
+references — and reference-image bytes live on per-platform CDN domains
+(`i.pximg.net`, `i.pinimg.com`, `pbs.twimg.com`, …) distinct from the site, so
+a fixed list silently fails on the next site/CDN. We do not under-scope into a
+list we would constantly outgrow; comparable clippers (e.g. Eagle) request the
+same. The trust guarantee here is **behavioural, not scope-based** (see "What
+the extension never does" below and the auditability commitments above): broad
+reach, but Wisp acts only on user- / desktop-initiated requests, never in the
+background, never auto-confirms a write, ships no remote code, sends no
+telemetry, and returns data only to the local desktop process. The local
+asset/ingest channel (`127.0.0.1`, one-time 5-min tokens, loopback-bound) is
+covered by this.
 
 ## What the extension never does
 
