@@ -86,7 +86,12 @@ export async function capturePage(payload) {
         // Binary capture (screenshot / PDF): CDP returns base64 in `data`.
         if (typeof result?.data === 'string' && result.data) {
             const bytes = _b64ToBytes(result.data);
-            const mime = method === 'Page.printToPDF' ? 'application/pdf' : 'image/png';
+            const fmt = String(params.format || 'png').toLowerCase();
+            const mime = method === 'Page.printToPDF'
+                ? 'application/pdf'
+                : (fmt === 'jpeg' || fmt === 'jpg') ? 'image/jpeg'
+                    : fmt === 'webp' ? 'image/webp'
+                        : 'image/png';
             if (hasIngest) {
                 const ok = await _ingest(ingestUrl, bytes, mime);
                 return { ok, ingested: ok, bytes: bytes.length, mime, method };

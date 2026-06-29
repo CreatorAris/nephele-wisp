@@ -134,13 +134,16 @@ the trust boundary is the **desktop** `reference.clip` handler, which MUST:
   filename, path component, or shell argument without sanitization.
 
 This requirement is locked in here **before** the desktop handler is written.
-The desktop guard resolves hostnames and checks every answer (including
-IPv4-mapped IPv6 like `::ffff:127.0.0.1`), fail-closed. **Known v1 limitation**:
-the guard resolves DNS in the desktop, but the actual fetch re-resolves in the
-browser — a DNS-rebinding attacker (own DNS, short TTL, precise timing) could
-theoretically slip a private target past it. The attack needs attacker DNS
-control (not just a malicious page) and is inherent to any DNS-based SSRF guard;
-accepted for v1.
+The desktop guard blocks literal private/loopback/link-local/reserved IP targets
+(including IPv4-mapped IPv6 like `::ffff:127.0.0.1`) and `localhost`-family
+hostnames. It deliberately does **not** resolve other hostnames: desktop DNS is
+unreliable behind fake-IP proxies (Clash/FlClash return `198.18.x.x`
+placeholders that look `is_private` and would false-positive every real CDN
+host). **Accepted residual**: a hostname that itself resolves to a private
+target is allowed — but the impact is local-read-only (the fetched bytes land in
+the user's own local library, never an attacker's server; there is no exfil
+path), it needs attacker DNS control, and the literal-IP vectors are still
+blocked. Net risk is low; chosen over breaking clipping for every proxy user.
 
 ## Reporting vulnerabilities
 
