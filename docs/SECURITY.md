@@ -125,6 +125,13 @@ the trust boundary is the **desktop** `reference.clip` handler, which MUST:
   filename, path component, or shell argument without sanitization.
 
 This requirement is locked in here **before** the desktop handler is written.
+The desktop guard resolves hostnames and checks every answer (including
+IPv4-mapped IPv6 like `::ffff:127.0.0.1`), fail-closed. **Known v1 limitation**:
+the guard resolves DNS in the desktop, but the actual fetch re-resolves in the
+browser — a DNS-rebinding attacker (own DNS, short TTL, precise timing) could
+theoretically slip a private target past it. The attack needs attacker DNS
+control (not just a malicious page) and is inherent to any DNS-based SSRF guard;
+accepted for v1.
 
 ## Reporting vulnerabilities
 
