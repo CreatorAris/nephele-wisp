@@ -81,10 +81,8 @@ export async function extractPageResources(payload) {
     const scrollRounds = Math.min(8, Math.max(0,
         parseInt(payload?.scroll_rounds, 10) || DEFAULT_SCROLL_ROUNDS));
     const minSize = Math.max(0, parseInt(payload?.min_size, 10) || 160);
-    const totalInlineLimit = Math.min(620_000, Math.max(80_000,
+    const totalInlineLimit = Math.min(900_000, Math.max(80_000,
         parseInt(payload?.max_total_bytes, 10) || DEFAULT_TOTAL_INLINE_BYTES));
-    const perImageLimit = Math.min(600_000, Math.max(20_000,
-        parseInt(payload?.max_image_bytes, 10) || DEFAULT_PER_IMAGE_BYTES));
 
     return await withCdpTab(url, async (session) => {
         try {
