@@ -30,8 +30,15 @@
     "storage",
     "debugger",
     "tabs",
-    "alarms"
+    "alarms",
+    "contextMenus"
   ],
+  "commands": {
+    "clip-page": {
+      "suggested_key": { "default": "Alt+Shift+S" },
+      "description": "保存当前页面到 Nephele"
+    }
+  },
   "host_permissions": [
     "*://*.bilibili.com/*",
     "*://*.xiaohongshu.com/*",

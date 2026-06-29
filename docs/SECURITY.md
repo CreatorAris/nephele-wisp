@@ -106,6 +106,26 @@ which case only the minimum subset needed is sent to Nephele's API over
 HTTPS, with user-visible indication. That egress is the desktop app's, under
 Nephele Workshop's privacy policy — not the extension's.
 
+## Clip flow (`reference.clip`)
+
+The context-menu / keyboard clip surfaces fire a fire-and-forget
+`reference.clip` event carrying **page-controlled** metadata (`src_url`,
+`link_url`, `selection_text`, `page_url`). The extension deliberately does
+**not** sanitize these — filtering would break legitimate image clipping — so
+the trust boundary is the **desktop** `reference.clip` handler, which MUST:
+
+- Reject any `src_url` / `link_url` not starting with `http://` or `https://`
+  (blocks `data:`, `blob:`, `file:`, `javascript:`).
+- Block SSRF targets before any outbound fetch: loopback and RFC-1918 /
+  link-local ranges — `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`,
+  `192.168.0.0/16`, `169.254.0.0/16`, `::1`, `fd00::/8`. A page can set
+  `<img src="http://127.0.0.1:<port>/...">` to aim a clip at a local service
+  (including Nephele's own asset/IPC ports).
+- Treat `selection_text` and `tab_title` as untrusted: never use them as a
+  filename, path component, or shell argument without sanitization.
+
+This requirement is locked in here **before** the desktop handler is written.
+
 ## Reporting vulnerabilities
 
 Email `arisyingying13@gmail.com` with `[Wisp Security]` in the subject. Do

@@ -33,6 +33,7 @@ import { fetchArtstationReferences } from './handlers/reference_artstation.js';
 import { fetchHuabanReferences } from './handlers/reference_huaban.js';
 import { extractPageResources, fetchFullImages } from './handlers/reference_resources.js';
 import { readPage, interactPage } from './handlers/browser_read.js';
+import { installClipSurfaces } from './clip.js';
 
 const NMH_NAME = 'com.arisfusion.nephele_wisp';
 const PROTOCOL_VERSION = 1;
@@ -672,6 +673,24 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onStartup.addListener(() => {
     log('onStartup');
     connect();
+});
+
+// Clip entry points (context menu + keyboard command). Registered at top level
+// so onClicked/onCommand survive SW suspension; each fires a fire-and-forget
+// reference.clip event to the desktop, which owns the capture/save logic.
+// If the native port dropped while the SW stayed awake, send() returns false —
+// kick a reconnect and flash a badge so the clip isn't silently lost.
+installClipSurfaces((payload) => {
+    const ok = send(envelope('event', 'reference.clip', payload));
+    if (!ok) {
+        connect();  // no-op if a connection is already being established
+        try {
+            chrome.action.setBadgeText({ text: '!' });
+            chrome.action.setBadgeBackgroundColor({ color: '#E05C3A' });
+            setTimeout(() => chrome.action.setBadgeText({ text: '' }), 4000);
+        } catch (_) { /* action badge unavailable — best-effort signal only */ }
+    }
+    return ok;
 });
 
 // MV3 keepalive — must be registered at module top-level so the SW wakes
