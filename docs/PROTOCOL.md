@@ -277,6 +277,19 @@ Native Messaging 1 MB cap. Returns `{ results: [{ url, ok, bytes?, mime?,
 reason? }], ok_count, total }` — the bytes themselves travel over HTTP, not
 the NM frame.
 | `browser.interact` | neph → ext | navigate + click/type/scroll/press/wait sequence + extract |
+| `browser.capture` | neph → ext | bounded CDP capture (screenshot / PDF / DOM), bytes via ingest |
+
+`browser.capture({ url, method?, params?, scroll_rounds?, ingest_url? })` is a
+**bounded** CDP passthrough: the desktop names a CDP method from a fixed
+read-only whitelist (`Page.captureScreenshot`, `Page.printToPDF`,
+`DOM.getDocument`, `DOM.getOuterHTML`, `DOMSnapshot.captureSnapshot`) plus its
+params, and the extension runs it on an ephemeral tab. `method` defaults to
+`Page.captureScreenshot`. Binary results (screenshot / PDF base64) are streamed
+to `ingest_url` over HTTP (breaks the 1 MB NM frame) or returned inline when
+small; DOM results return inline or via ingest when large. **Never** accepts
+`Runtime.evaluate` / `Input.*` / `Network.*` — no arbitrary code or page
+mutation through this route. New capture features (region/element/full-page) are
+desktop-supplied params, not new RPCs — the engine ships once.
 
 #### `browser.read_page` payload
 

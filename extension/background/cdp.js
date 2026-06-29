@@ -21,6 +21,26 @@ import {
 
 const DEBUGGER_VERSION = '1.3';
 
+// Validate an out-of-band ingest URL before POSTing captured bytes to it.
+// MUST use the WHATWG URL parser, not a regex: a string like
+// "http://127.0.0.1:80@evil.com/x" passes a naive /^http:\/\/127\.0\.0\.1/
+// test but fetch() parses 127.0.0.1:80 as userinfo and sends to evil.com —
+// with <all_urls> that exfiltrates the capture. Require http, loopback host,
+// and no userinfo.
+export function isLocalIngestUrl(rawUrl) {
+    try {
+        const u = new URL(String(rawUrl || ''));
+        return (
+            u.protocol === 'http:' &&
+            u.hostname === '127.0.0.1' &&
+            u.username === '' &&
+            u.password === ''
+        );
+    } catch (_) {
+        return false;
+    }
+}
+
 // Minimal map for shortcut keys we actually use (a–z letters + common
 // named keys). CDP's `code` field expects physical-key codes, not the
 // produced character. Extend when a new key is needed.

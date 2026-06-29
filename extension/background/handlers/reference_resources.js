@@ -9,7 +9,7 @@
  * Native Messaging frames are capped at 1 MB, so bytes are capped per item
  * and per response. Oversized or blocked images are reported explicitly.
  */
-import { withCdpTab } from '../cdp.js';
+import { withCdpTab, isLocalIngestUrl } from '../cdp.js';
 import { sleep, preActionDelay } from '../humanize.js';
 
 const DEFAULT_SCROLL_ROUNDS = 3;
@@ -350,7 +350,7 @@ export async function fetchFullImages(payload) {
     for (const it of reqItems) {
         const url = String(it?.url || '');
         const ingestUrl = String(it?.ingest_url || '');
-        if (!/^https?:\/\//i.test(url) || !/^http:\/\/127\.0\.0\.1[:/]/.test(ingestUrl)) {
+        if (!/^https?:\/\//i.test(url) || !isLocalIngestUrl(ingestUrl)) {
             results.push({ url, ok: false, reason: 'bad_item' });
             continue;
         }

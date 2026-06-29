@@ -33,6 +33,7 @@ import { fetchArtstationReferences } from './handlers/reference_artstation.js';
 import { fetchHuabanReferences } from './handlers/reference_huaban.js';
 import { extractPageResources, fetchFullImages } from './handlers/reference_resources.js';
 import { readPage, interactPage } from './handlers/browser_read.js';
+import { capturePage } from './handlers/browser_capture.js';
 import { installClipSurfaces } from './clip.js';
 
 const NMH_NAME = 'com.arisfusion.nephele_wisp';
@@ -281,6 +282,14 @@ function routeRequest(msg) {
             // result. Read-oriented; account writes stay in publisher.*.
             // Backs wisp_interact's Tier 1.
             dispatchAsync(msg, interactPage);
+            return;
+
+        case 'browser.capture':
+            // Bounded CDP capture passthrough — desktop names a whitelisted
+            // read-only capture method (Page.captureScreenshot / printToPDF /
+            // DOM.*); bytes stream back over the HTTP ingest channel. Generic
+            // engine: new capture features are desktop params, no re-submission.
+            dispatchAsync(msg, capturePage);
             return;
 
         // Removed: 'inbox.fetch_comments', 'inbox.reply', 'scheduler.execute'
