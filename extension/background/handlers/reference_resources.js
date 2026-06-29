@@ -78,16 +78,35 @@ export function _fullResCandidates(url) {
     const out = [];
     try {
         const u = new URL(url);
-        // ArtStation / similar: .../<size>/<file> where size is a thumbnail
-        // token right before the filename → swap to 4k, then large.
-        const m = u.pathname.match(
-            /\/(micro_square|smaller_square|small_square|medium_square|larger_square|small|medium|thumb)\/([^/]+)$/);
-        if (m) {
-            for (const big of ['4k', 'large']) {
-                out.push(u.origin + u.pathname.replace(`/${m[1]}/${m[2]}`, `/${big}/${m[2]}`) + u.search);
+        const path = u.pathname;
+        // ArtStation: /.../<id>/<timestamp>/<square>/<name>.<ext>
+        //          →  /.../<id>/large/<name>.webp
+        // The full renditions (large / 4k) drop the timestamp directory AND are
+        // served as .webp — verified live: the grid's smaller_square/<n>.jpg
+        // upgrades to large/<n>.webp (528 KB vs 64 KB). Try large first (what
+        // the artwork page itself displays, always present), then 4k.
+        const as = path.match(
+            /^(.*)\/\d{6,}\/(?:micro_square|smaller_square|small_square|medium_square|larger_square)\/([^/]+?)\.(jpe?g|png|webp)$/i);
+        if (as) {
+            const stem = as[1];          // .../<id>
+            const name = as[2];          // filename without extension
+            const ext = as[3].toLowerCase();
+            for (const size of ['large', '4k']) {
+                for (const e of ['webp', ext]) {
+                    out.push(`${u.origin}${stem}/${size}/${name}.${e}${u.search}`);
+                }
+            }
+        } else {
+            // Generic CDN size-token swap (non-ArtStation): /<size>/<file> → bigger.
+            const gen = path.match(
+                /\/(micro_square|smaller_square|small_square|medium_square|larger_square|small|medium|thumb)\/([^/]+)$/);
+            if (gen) {
+                for (const big of ['large', '4k']) {
+                    out.push(`${u.origin}${path.replace(`/${gen[1]}/${gen[2]}`, `/${big}/${gen[2]}`)}${u.search}`);
+                }
             }
         }
-    } catch (_) { /* unparseable → just use the original */ }
+    } catch (_) { /* unparseable → original only */ }
     out.push(url);
     return Array.from(new Set(out));
 }
