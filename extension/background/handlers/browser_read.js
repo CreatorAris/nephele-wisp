@@ -205,6 +205,42 @@ function __wispExtractPage(opts) {
         pick('meta[property="og:image"]', 'og:image');
     } catch (_) {}
 
+    // ── source-site tags: harvest the page's own tag chips via a per-host
+    //    selector table (knowledge ported from Eagle's site-parser). Lets a
+    //    collected reference carry the source platform's tags into the
+    //    tagger/library. First matching host wins; capped + deduped. ──
+    const source_tags = [];
+    try {
+        const TAG_RULES = [
+            { host: 'artstation.com', sel: '.tags .label-tag' },
+            { host: 'deviantart.com', sel: '.discoverytag' },
+            { host: 'behance.net', sel: '.object-tag' },
+            { host: 'dribbble.com', sel: '.popular-tags .tag a' },
+            { host: '500px.com', sel: '.tag-container .tag' },
+            { host: 'flickr.com', sel: '.tags-list li' },
+            { host: 'huaban.com', sel: '#tag-group a' },
+            { host: 'zcool.com.cn', sel: '.work-taglist .worktag-con a, .works-tag-wrap a' },
+            { host: 'instagram.com', sel: 'span a', hashtag: true },
+            { host: 'pinterest.', sel: '.AggregatedCloseupCard a', hashtag: true },
+            { host: 'designspiration.net', sel: '.descriptionTag' },
+        ];
+        const host = (location.hostname || '').toLowerCase();
+        for (const rule of TAG_RULES) {
+            if (host.indexOf(rule.host) === -1) continue;
+            const seenTag = new Set();
+            for (const node of Array.from(document.querySelectorAll(rule.sel))) {
+                if (source_tags.length >= 30) break;
+                let t = clean(node.innerText || node.textContent);
+                if (rule.hashtag && t.indexOf('#') === -1) continue;
+                t = t.replace(/^#+/, '').trim();
+                if (!t || t.length > 60 || seenTag.has(t)) continue;
+                seenTag.add(t);
+                source_tags.push(t);
+            }
+            if (source_tags.length) break;
+        }
+    } catch (_) {}
+
     let loginRequired = false;
     try {
         const pw = document.querySelector('input[type="password"]');
@@ -244,6 +280,7 @@ function __wispExtractPage(opts) {
         items,
         items_count: items.length,
         meta,
+        source_tags,
         login_required: loginRequired,
         antibot_challenge: antibot,
     };
