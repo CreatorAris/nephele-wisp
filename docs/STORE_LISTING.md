@@ -1,8 +1,14 @@
 # Nephele Wisp — Store Listing Copy
 
-Drafts for the Chrome Web Store and Edge Add-ons listings. Pick / edit
-before submission. Avoid marketing fluff: reviewers and artists both prefer
-plain factual copy.
+Listing copy for the Edge Add-ons submission (v0.5.0). Also valid for the
+Chrome Web Store if/when that channel is onboarded. Pick / edit before
+submission. Avoid marketing fluff: reviewers and artists both prefer plain
+factual copy.
+
+> **This update (v0.5.0)** adds a "Save to Nephele" clipper (context menu +
+> `Alt+Shift+S`) and general page read/capture, and broadens host access to
+> `<all_urls>`. The permission and privacy copy below reflects that — keep it
+> in sync with `docs/PERMISSIONS.md` and `docs/PRIVACY.md`.
 
 ---
 
@@ -22,11 +28,12 @@ plain factual copy.
 ## Single-purpose description
 
 > Wisp is the browser-side half of the Nephele Workshop desktop app. It
-> carries out the publishing-workflow requests the desktop app sends —
-> filling upload forms (and stopping at "draft ready" for you to review and
-> publish), reading your own creator stats, and gathering reference images
-> — all in your own logged-in browser session, returning the results to the
-> desktop app. The extension does nothing on its own.
+> carries out the requests the desktop app sends — filling upload forms (and
+> stopping at "draft ready" for you to review and publish), reading your own
+> creator stats, reading pages, and gathering or clipping reference images —
+> all in your own logged-in browser session, returning the results to the
+> desktop app. The extension does nothing on its own; every action originates
+> from the desktop app or a clip you explicitly invoked.
 
 ## Detailed description
 
@@ -46,6 +53,11 @@ and Wisp carries it out in your existing login session:
 - **Read your own creator stats** from your creator-center dashboard and
   hand them back to the desktop app.
 - **Gather reference images** from a search you ran in the desktop app.
+- **Read a page** you asked the desktop app to read, in a background tab in
+  your session, and return a read-only snapshot.
+- **Save to Nephele**: right-click an image, link, selection, or page — or
+  press Alt+Shift+S — and Wisp hands the desktop app a pointer to what you
+  picked so it can save it. The clipper only acts when you invoke it.
 
 Everything Wisp reads or fills is for a request you just initiated, in your
 session, and the result goes only to the Nephele Workshop app on your own
@@ -123,11 +135,12 @@ Suggested set:
 
 1. **Hero shot**: Nephele Workshop UI with Wisp connection indicator on,
    side-by-side with a platform tab Wisp is filling.
-2. **Bilibili draft filled**: 动态 with image + caption + topic chip,
-   publish button visible (not clicked).
-3. **Xiaohongshu draft filled**: 图文笔记 with title + image preview + caption.
-4. **Reference search**: desktop app showing reference thumbnails Wisp
+2. **Draft filled**: a compose form (e.g. 动态 / 图文笔记) with image + caption
+   + topic chip, publish button visible (not clicked).
+3. **Reference search**: desktop app showing reference thumbnails Wisp
    gathered from a search.
+4. **Save to Nephele (clipper)**: the right-click "保存到 Nephele" menu item
+   on an image, and/or the saved reference appearing in the desktop app.
 5. **The yellow debugger bar** annotated: the visible signal that automation
    is active.
 
@@ -142,56 +155,76 @@ Promo tile: 440×280 PNG — `extension/icons/promo_tile_440x280.png` exists.
 | debugger | Drives forms and reads pages via Chrome DevTools Protocol on tabs the extension opens itself; Chrome shows a persistent yellow notification bar while attached. |
 | tabs | Opens the automation tab, finds it for a request, and closes it on cleanup. |
 | alarms | A 30-second keepalive heartbeat that stops the MV3 service worker from suspending and dropping the Native Messaging connection. |
+| contextMenus | Adds the "Save to Nephele" right-click item so you can clip an image, link, selection, or page to the desktop app. |
 
-## Host permission justification (for the listing form)
+## Host permission justification (`<all_urls>`, for the listing form)
 
-> Each domain has a handler that acts on it, in the user's logged-in
-> session, only when the user initiates a matching request from the Nephele
-> Workshop desktop app. Requests are of three kinds: filling an upload draft
-> (publisher), reading the user's own creator stats (creator), and reference
-> image search (reference).
+> Wisp requests broad host access because its job — acting in the user's own
+> logged-in session to publish, read pages, collect references, and clip
+> images on whatever site the user is working with — is inherently all-sites.
+> A user researches and clips from anywhere on the web, and reference-image
+> *bytes* live on per-platform CDN domains (i.pximg.net, i.pinimg.com,
+> pbs.twimg.com, …) that differ from each site's own domain, so an enumerated
+> allow-list would silently fail on the next site or CDN.
 >
-> Shipped platforms: Bilibili, 小红书, 微博, 抖音, Pixiv, Twitter/X,
-> ArtStation (upload + reference), Pinterest (reference), Huaban (reference).
-> There are no declared hosts without a handler.
->
-> 127.0.0.1 is for the local-only asset transfer server the desktop app
-> exposes — required because Native Messaging caps individual host→extension
-> messages at 1 MB and image bytes routinely exceed that.
+> Broad scope is bounded by hard, repository-verifiable behaviour, not by the
+> host list: no background or scheduled activity (every action is one the user
+> just initiated, or a clip they invoked); the `chrome.debugger` yellow bar
+> makes automation visible and Wisp attaches only to tabs it opened; it never
+> clicks the final publish/send button; and all data returns only to the local
+> Nephele Workshop process on the same machine — no server of ours, no
+> telemetry. 127.0.0.1 (covered by `<all_urls>`) is the local-only asset
+> transfer server, needed because Native Messaging caps host→extension
+> messages at 1 MB and image bytes exceed that.
 
-See `docs/PERMISSIONS.md` for full per-permission justification.
+See `docs/PERMISSIONS.md` for the full per-permission justification.
 
 ## Distribution / pricing
 
 Free. The extension itself does nothing without the (paid) Nephele Workshop
 desktop app. Listing must NOT pretend the extension is a standalone product.
 
-## Submission checklist
+## Submission checklist (Edge Add-ons, v0.5.0)
 
-Before clicking submit:
+Target this round: **Edge Add-ons update only** (already onboarded; reuses the
+existing extension ID). Chrome Web Store is not onboarded and is out of scope
+for this update.
+
+Done:
 
 - [x] Icons 16/32/48/128 in `extension/icons/` (final art).
 - [x] Promo tile 440×280 (`extension/icons/promo_tile_440x280.png`).
-- [ ] Privacy policy URL <https://nephele.arisfusion.com/wisp/privacy> is
-      LIVE and renders the Wisp policy (not the landing page). Deploy the
-      page from the website repo first, then verify the body.
+- [x] `manifest.json` `version` = **0.5.0**.
+- [x] `system.eval` dev probe is `@wisp-dev-only`-marked and stripped by
+      `scripts/pack.py` (the pack FAILS if `system.eval` / `handleSystemEval`
+      survives), so the store artifact has no arbitrary-eval route.
+- [x] PRIVACY.md / PERMISSIONS.md / STORE_LISTING.md updated for the clipper,
+      page read/capture, `contextMenus`, and `<all_urls>`.
+
+Before clicking submit:
+
+- [ ] Store artifact built with `python scripts/pack.py` → `wisp-0.5.0.zip`
+      (NOT a raw zip). Deterministic; confirm it contains no `system.eval`.
+- [ ] Privacy policy URL <https://nephele.arisfusion.com/wisp/privacy> is LIVE
+      and renders the **0.5.0** Wisp policy (clipper + `<all_urls>`), not the
+      landing page. Update + deploy the website page first, then verify body.
 - [ ] Permissions justification URL <https://nephele.arisfusion.com/wisp/permissions>
-      is LIVE and renders the Wisp permissions doc.
-- [ ] Screenshots produced (≥1 required; 5 recommended, 1280×800 PNG).
-- [ ] `manifest.json` `version` confirmed for this update (currently 0.4.15)
-      and a matching `v<version>` git tag pushed.
-- [ ] Store artifact built with `python scripts/pack.py` (NOT a raw zip) so
-      the dev-only `system.eval` probe is stripped; confirm the zip contains
-      no `system.eval`.
-- [ ] Store data-use form filled: declares NO data collection. The
-      extension only reads pages on the user's behalf and hands the result
-      to the local desktop app over Native Messaging (on-device IPC) — it
-      transmits nothing off-device or to us, so under both stores' "collect"
-      definition (transmit off-device / to the developer) nothing is
-      collected. Privacy policy clarifies local-only processing.
+      is LIVE and renders the **0.5.0** permissions doc.
+- [ ] Screenshots produced (≥1 required; 5 recommended, 1280×800 PNG) —
+      include a clipper shot. (You produce these from real runs; no AI assets.)
+- [ ] Data-use form: declares **NO data collection**. Wisp only reads pages on
+      your behalf and hands the result to the local desktop app over Native
+      Messaging (on-device IPC) — nothing is transmitted off-device or to us,
+      so under the store's "collect" definition (transmit off-device / to the
+      developer) nothing is collected. Privacy policy clarifies local-only.
+- [ ] `<all_urls>` justification pasted into the listing (see section above).
 - [ ] Smoke test passes against a logged-in profile for the shipped
-      publisher platforms.
+      publisher platforms + a clipper invocation.
 - [ ] Nephele Workshop NMH register flow tested in a Nuitka build (not just
       dev `python main_qt.py`).
-- [ ] Edge CI secrets present (`EDGE_PRODUCT_ID`, `EDGE_CLIENT_ID`,
-      `EDGE_API_KEY`) if shipping via tag push, OR plan a manual upload.
+- [ ] Publish path chosen: (A) Edge CI via `git tag 0.5.0 && git push origin
+      0.5.0` — requires `EDGE_PRODUCT_ID` / `EDGE_CLIENT_ID` / `EDGE_API_KEY`
+      secrets (last checked empty; values in MS Partner Center); OR
+      (B) manual upload of `wisp-0.5.0.zip` to Edge Partner Center.
+- [ ] Push the 14 local commits to `origin/main` so the public source matches
+      the submitted artifact (auditability promise).

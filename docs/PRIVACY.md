@@ -1,6 +1,6 @@
 # Nephele Wisp — Privacy Policy
 
-_Last updated: 2026-05-31_
+_Last updated: 2026-06-30_
 
 ## Summary
 
@@ -18,9 +18,10 @@ analytics or telemetry.
 
 ## What Wisp does, and the data each request handles
 
-Wisp performs three kinds of request, each one explicitly initiated by you
-from the desktop app. None of them runs in the background or on a schedule
-you did not start.
+Wisp performs the kinds of request below. Each one is explicitly initiated
+by you — from the Nephele Workshop desktop app, or, for the clipper, by your
+own context-menu click or keyboard shortcut. None of them runs in the
+background or on a schedule you did not start.
 
 ### 1. Publishing a draft (`publisher.upload_draft`)
 
@@ -36,10 +37,11 @@ for you to review and publish manually.
 ### 2. Collecting reference images (`reference.fetch_*`)
 
 When you run a reference search in the desktop app, Wisp opens the search
-page for the source you chose (Pinterest, Huaban, or ArtStation) and reads
-the results, so the desktop app can show you reference thumbnails. This is
-the same thing you would do by searching the site yourself; Wisp does it in
-your session so the result matches what you would see.
+page for the source you chose (e.g. Pinterest, Huaban, ArtStation, or another
+site you search) and reads the results, so the desktop app can show you
+reference thumbnails. This is the same thing you would do by searching the
+site yourself; Wisp does it in your session so the result matches what you
+would see.
 
 | Data | Source | Where it goes |
 |---|---|---|
@@ -56,6 +58,33 @@ Pixiv) and reads the analytics that page loads about your account.
 |---|---|---|
 | Your own public creator metrics (views, likes, followers, etc.) and your account ID on that platform | The JSON responses your creator-center page already requests, observed on the tab Wisp opens | Returned to the desktop app and stored locally on your machine. Never sent to a third party. |
 
+### 4. Reading a page on your behalf (`browser.read_page` / `browser.capture`)
+
+When you ask the desktop app to read or capture a page (for example, to
+collect references or pull content from a site you are researching), Wisp
+opens that URL in an **ephemeral background tab inside your own session** and
+extracts a read-only snapshot, then closes the tab. `browser.capture` is
+restricted to a fixed whitelist of read-only DevTools Protocol methods
+(screenshot, PDF, DOM/HTML snapshot) — it cannot run code or modify the page.
+
+| Data | Source | Where it goes |
+|---|---|---|
+| Readable text, links, image URLs, optional CSS-selected rows, page metadata, or a screenshot / PDF / DOM snapshot of the requested URL | The page Wisp opens in a background tab for this request | Returned to the desktop app on your machine. Never sent to a third party. Held only for the lifetime of the request, then the tab is closed. |
+
+### 5. Saving what you point at — the clipper (`reference.clip`)
+
+When you right-click and choose **"保存到 Nephele" / "Save to Nephele"**, or
+press the clip shortcut (`Alt+Shift+S`), Wisp sends the desktop app a small
+pointer to the thing you selected so the app can save it. The clipper is the
+one case where Wisp acts on the **tab you are currently viewing** — but only
+the metadata you explicitly pointed at, only on your click or keypress, and
+the extension itself reads no page content beyond that pointer (the desktop
+app decides what, if anything, to fetch).
+
+| Data | Source | Where it goes |
+|---|---|---|
+| The image URL, link URL, selected text, page URL, and tab title of the item you clicked (whichever apply) | The browser's own context-menu / command event for your current tab | Sent once to the desktop app as a `reference.clip` event. Never sent to a third party. The extension does not store it. |
+
 ### Identifier stored across sessions
 
 | Data | Source | Where it goes |
@@ -66,9 +95,13 @@ Pixiv) and reads the analytics that page loads about your account.
 
 - Your passwords, cookies, session tokens, or platform credentials — Wisp
   never reads or stores them.
-- Tabs you opened yourself — Wisp only acts on tabs it opens for a request.
+- Tabs you opened yourself — Wisp's automation (form-fill, stats, page read)
+  runs only in background tabs it opens for a request and never attaches to a
+  tab you opened. The single exception is the clipper, which acts on your
+  current tab — and only on the metadata you explicitly point at, only when
+  you invoke it (see request type 5).
 - Anything in the background — Wisp does nothing without a request you
-  initiated from the desktop app.
+  initiated from the desktop app or a clip you invoked yourself.
 - Browsing history.
 
 ## Where data goes
@@ -77,10 +110,14 @@ Pixiv) and reads the analytics that page loads about your account.
   Workshop desktop app on the same machine, over Native Messaging
   (restricted by the browser to a host you explicitly installed) and the
   local asset server on `127.0.0.1`.
-- **No servers of our own, no analytics, no telemetry.** The only hosts the
-  extension contacts are (a) the platform domains listed in
-  `host_permissions`, in your session, to carry out the request you
-  initiated, and (b) the local asset server on `127.0.0.1`.
+- **No servers of our own, no analytics, no telemetry.** Wisp holds broad
+  host access (`<all_urls>`) because the work you ask it to do — publish,
+  read, collect references, clip — can target any site you use, and image
+  bytes live on per-platform CDN domains that differ from the site itself. It
+  contacts a site only (a) in your session, to carry out a request you just
+  initiated, and (b) the local asset server on `127.0.0.1`. It never contacts
+  a server of ours, because we do not run one for the extension. See
+  `docs/PERMISSIONS.md` for the full `<all_urls>` justification.
 - **The desktop app's own privacy** is governed by Nephele Workshop's
   privacy policy at <https://arisfusion.com/privacy>. Wisp is the bridge;
   anything that later leaves your machine does so through the desktop app,
