@@ -203,6 +203,8 @@ function __wispExtractPage(opts) {
         pick('meta[property="og:description"]', 'og:description');
         pick('meta[property="og:site_name"]', 'og:site_name');
         pick('meta[property="og:image"]', 'og:image');
+        pick('meta[property="article:published_time"]', 'article:published_time');
+        pick('meta[property="og:published_time"]', 'og:published_time');
     } catch (_) {}
 
     // ── source-site tags: harvest the page's own tag chips via a per-host
