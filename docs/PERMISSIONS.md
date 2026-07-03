@@ -85,6 +85,34 @@ persist and re-wake it.
 work and initiates no uploads or reads — those always require an explicit
 request from the desktop app.
 
+### `contextMenus`
+
+**Why it's required.** The web clipper's invocation point: a single
+"保存到 Nephele / Save to Nephele" entry on the right-click menu (image,
+link, selection, and page contexts). Without it the clipper has no mouse
+entry point (the keyboard shortcut alone is not discoverable).
+
+**Scope.** One menu root, registered on install. Clicking it sends a single
+`reference.clip` event to the desktop app; the menu itself reads nothing.
+
+### `scripting`
+
+**Why it's required.** When the user clips an image from a supported feed
+page (currently Bilibili), the extension runs ONE self-contained, read-only
+function in that tab via `chrome.scripting.executeScript` to find the
+clicked image's enclosing post card and read its post link + timestamp — so
+the saved reference keeps its true source and date. This is only possible at
+the click, in the live tab: the feed card's identity does not survive the
+context-menu event, and a later background read cannot see the user's scroll
+position.
+
+**Scope.** Fires only on a user-invoked image clip, only on known feed
+hosts, one shot per clip with a 1.5s budget. The injected function reads the
+clicked item's card (post link, timestamp text) and nothing else; it writes
+nothing to the page and persists nothing. Failure degrades to the plain clip
+(no context fields). The returned fields are treated as untrusted input by
+the desktop app (see `docs/SECURITY.md` §Clip flow).
+
 ## Host permissions: `<all_urls>`
 
 **Why broad access is required.** Wisp acts inside the user's logged-in

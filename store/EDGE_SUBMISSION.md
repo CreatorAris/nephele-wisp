@@ -105,6 +105,7 @@ Per-permission one-liners (full text in `docs/PERMISSIONS.md`):
 | tabs | Opens, finds, and closes the background automation tab for a request. |
 | alarms | 30-second keepalive so the MV3 service worker doesn't suspend and drop the Native Messaging connection. |
 | contextMenus | Adds the "Save to Nephele" right-click item for the clipper. |
+| scripting | On a user-invoked image clip from a supported feed page, runs one self-contained read-only function in that tab to read the clipped item's post link + timestamp (provenance). One shot per clip, writes nothing, fails open to a plain clip. |
 
 **Host permissions — `<all_urls>`**
 

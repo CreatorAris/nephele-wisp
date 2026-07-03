@@ -69,6 +69,20 @@ it on cleanup. Wisp never disrupts the user's own tabs.
 ~30s idle, which would drop the Native Messaging connection; the alarm
 re-wakes the worker. `setInterval` cannot survive worker recycling.
 
+### `contextMenus`
+**Why**: the clipper's right-click entry ("保存到 Nephele"). The menu itself
+reads nothing; clicking it fires one `reference.clip` event.
+
+### `scripting`
+**Why**: on a user-invoked image clip from a supported feed page (currently
+Bilibili), run ONE self-contained read-only function in that tab to read the
+clicked item's enclosing post link + timestamp — provenance that only exists
+at the click, in the live tab. One shot per clip, 1.5s budget, writes
+nothing, fails open to a plain clip. Its outputs are page-controlled input
+the desktop must validate (see "Clip flow" below).
+**Narrower alternative**: none — a background re-read cannot see the user's
+scroll position, and the context-menu event does not carry the element.
+
 ### `host_permissions`: `<all_urls>`
 **Approach**: broad host access. Wisp acts in the user's session on whatever
 site they are working with — publishing, reading, and collecting/clipping
