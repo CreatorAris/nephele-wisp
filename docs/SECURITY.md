@@ -119,7 +119,9 @@ Nephele Workshop's privacy policy — not the extension's.
 
 The context-menu / keyboard clip surfaces fire a fire-and-forget
 `reference.clip` event carrying **page-controlled** metadata (`src_url`,
-`link_url`, `selection_text`, `page_url`). The extension deliberately does
+`link_url`, `selection_text`, `page_url`, and — for image clips on known feed
+hosts — `post_url` / `post_time`, read from the clicked item's enclosing feed
+card via a read-only in-page script). The extension deliberately does
 **not** sanitize these — filtering would break legitimate image clipping — so
 the trust boundary is the **desktop** `reference.clip` handler, which MUST:
 
@@ -132,6 +134,10 @@ the trust boundary is the **desktop** `reference.clip` handler, which MUST:
   (including Nephele's own asset/IPC ports).
 - Treat `selection_text` and `tab_title` as untrusted: never use them as a
   filename, path component, or shell argument without sanitization.
+- Treat `post_url` / `post_time` as untrusted: accept `post_url` only after
+  re-parsing it into a known work-page form for the clip's platform (a hostile
+  page could plant an arbitrary URL as the saved item's provenance), and parse
+  `post_time` only through a strict date parser — never store it verbatim.
 
 This requirement is locked in here **before** the desktop handler is written.
 The desktop guard blocks literal private/loopback/link-local/reserved IP targets

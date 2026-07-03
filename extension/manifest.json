@@ -31,7 +31,8 @@
     "debugger",
     "tabs",
     "alarms",
-    "contextMenus"
+    "contextMenus",
+    "scripting"
   ],
   "commands": {
     "clip-page": {

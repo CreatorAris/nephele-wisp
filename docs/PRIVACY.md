@@ -77,13 +77,17 @@ When you right-click and choose **"保存到 Nephele" / "Save to Nephele"**, or
 press the clip shortcut (`Alt+Shift+S`), Wisp sends the desktop app a small
 pointer to the thing you selected so the app can save it. The clipper is the
 one case where Wisp acts on the **tab you are currently viewing** — but only
-the metadata you explicitly pointed at, only on your click or keypress, and
-the extension itself reads no page content beyond that pointer (the desktop
-app decides what, if anything, to fetch).
+on your click or keypress, and only about the item you pointed at: besides
+the browser's own event metadata, for an image clipped from a feed page
+(currently Bilibili) Wisp also reads that image's enclosing post link and
+post timestamp from the page, so the saved reference keeps its true source
+and date. Nothing else on the page is read, and the desktop app decides
+what, if anything, to fetch.
 
 | Data | Source | Where it goes |
 |---|---|---|
 | The image URL, link URL, selected text, page URL, and tab title of the item you clicked (whichever apply) | The browser's own context-menu / command event for your current tab | Sent once to the desktop app as a `reference.clip` event. Never sent to a third party. The extension does not store it. |
+| For an image clipped from a supported feed page: that item's post link and post timestamp | A one-shot read-only script in the current tab, scoped to the clicked item's feed card | Sent in the same `reference.clip` event. Never sent to a third party. The extension does not store it. |
 
 ### Identifier stored across sessions
 
