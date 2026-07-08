@@ -483,6 +483,7 @@ preflight is permitted.
 | `TOKEN_EXPIRED` | Asset-transfer token invalid |
 | `NEPHELE_NOT_RUNNING` | Nephele UI process is not running; business request cannot be served |
 | `ACTION_REQUIRED` | Platform requires the user to take a manual action (e.g. dismiss a one-time ToS / first-post agreement modal) before automation can proceed. Tab is left open; user resolves and retries. |
+| `NO_BROWSER_WINDOW` | Edge is running headless (startup boost, zero windows) and both `tabs.create` and the `windows.create` fallback failed. Desktop side should spawn an Edge window and retry. |
 | `INTERNAL` | Unhandled error |
 
 ## Security Boundary

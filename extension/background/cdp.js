@@ -586,14 +586,48 @@ export class CdpSession {
 // closing the tab would discard their work. Default is to remove the
 // tab (suitable for fire-and-forget data-ingest flows like creator.*
 // and inbox.fetch_*).
-export async function withCdpTab(initialUrl, fn, { keepTab = false, active = false } = {}) {
-    const tab = await new Promise((resolve, reject) => {
-        chrome.tabs.create({ url: initialUrl, active }, (t) => {
-            const err = chrome.runtime.lastError;
-            if (err) reject(new Error(`tabs.create: ${err.message}`));
-            else resolve(t);
+// Edge "startup boost" / background mode keeps this SW (and the NMH link)
+// alive with zero browser windows open — the daily-Chrome-user case.
+// tabs.create then fails instantly with "No current window", so fall back
+// to creating an unfocused window of our own. The window stays behind the
+// user's current app (focused: false) and auto-closes when its last tab is
+// removed by withCdpTab's normal cleanup.
+async function createTabEnsuringWindow(url, active) {
+    try {
+        return await new Promise((resolve, reject) => {
+            chrome.tabs.create({ url, active }, (t) => {
+                const err = chrome.runtime.lastError;
+                if (err) reject(new Error(`tabs.create: ${err.message}`));
+                else resolve(t);
+            });
         });
-    });
+    } catch (e) {
+        if (!/no current window|no window with id/i.test(e.message)) throw e;
+        // focused follows `active`: read-side scrapes stay behind the user's
+        // current app; interactive flows (publisher review, active: true)
+        // need the window visible.
+        const win = await new Promise((resolve, reject) => {
+            chrome.windows.create({ url, focused: active }, (w) => {
+                const err = chrome.runtime.lastError;
+                if (err) {
+                    const e2 = new Error(`windows.create: ${err.message}`);
+                    e2.code = 'NO_BROWSER_WINDOW';
+                    reject(e2);
+                } else resolve(w);
+            });
+        });
+        const t = win && win.tabs && win.tabs[0];
+        if (!t) {
+            const e3 = new Error('NO_BROWSER_WINDOW: window created without tab');
+            e3.code = 'NO_BROWSER_WINDOW';
+            throw e3;
+        }
+        return t;
+    }
+}
+
+export async function withCdpTab(initialUrl, fn, { keepTab = false, active = false } = {}) {
+    const tab = await createTabEnsuringWindow(initialUrl, active);
     const session = new CdpSession(tab.id);
     try {
         await session.attach();
@@ -627,6 +661,7 @@ export function classifyCdpError(err) {
     const msg = (err && err.message) || String(err);
     if (msg.startsWith('DOM_NOT_FOUND')) return 'DOM_NOT_FOUND';
     if (msg.startsWith('TIMEOUT')) return 'TIMEOUT';
+    if (/no current window|no window with id/i.test(msg)) return 'NO_BROWSER_WINDOW';
     if (msg.includes('attach')) return 'INTERNAL';  // debugger attach failure
     if (msg.toLowerCase().includes('captcha')) return 'CAPTCHA_REQUIRED';
     return 'INTERNAL';
