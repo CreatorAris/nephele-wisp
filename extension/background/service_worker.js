@@ -511,6 +511,15 @@ function handleEvent(msg) {
             scheduleReconnect();
             return;
         }
+        case 'system.reload_request':
+            // Fast-channel update flow: the desktop app has just swapped the
+            // unpacked extension's files on disk and asks us to pick them up.
+            // runtime.reload() re-reads the folder; the NMH port re-connects
+            // on the fresh SW boot. Harmless on the store copy (plain restart).
+            log('reload requested by desktop — reloading');
+            chrome.runtime.reload();
+            return;
+
         default:
             log('event (ignored)', msg.type, msg.payload);
     }
