@@ -549,12 +549,36 @@ async function performHandshake() {
             'ui_online=', connected);
         startHeartbeat();
         broadcastStatus();
+        reportWindowState();
         return true;
     } catch (e) {
         error('handshake failed:', e.message);
         return false;
     }
 }
+
+// ──────────────────────────────────────────────────────────────────
+// Window state (system.window_state event)
+// ──────────────────────────────────────────────────────────────────
+// Edge startup boost keeps this SW alive with zero windows — "connected"
+// on the desktop side then says nothing about whether tabs.create can
+// work. Push the normal-window count so the UI can show a standby state.
+// Fire-and-forget; desktop builds whose NMH predates the
+// system.window_state forward-allowlist just drop it.
+
+async function reportWindowState() {
+    if (!port || !connected) return;
+    try {
+        const wins = await chrome.windows.getAll();
+        const count = wins.filter((w) => w.type === 'normal').length;
+        send(envelope('event', 'system.window_state', { count }));
+    } catch (e) {
+        error('reportWindowState failed:', e.message);
+    }
+}
+
+chrome.windows.onCreated.addListener(() => reportWindowState());
+chrome.windows.onRemoved.addListener(() => reportWindowState());
 
 // ──────────────────────────────────────────────────────────────────
 // Heartbeat
