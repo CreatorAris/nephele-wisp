@@ -580,7 +580,10 @@ async function reportWindowState() {
     try {
         const wins = await chrome.windows.getAll();
         const count = wins.filter((w) => w.type === 'normal').length;
-        send(envelope('event', 'system.window_state', { count }));
+        // browser rides along so the desktop's auto-launch bootstrap spawns
+        // the browser Wisp actually lives in (daily-Chrome users) instead
+        // of unconditionally popping Edge.
+        send(envelope('event', 'system.window_state', { count, browser: detectBrowser() }));
     } catch (e) {
         error('reportWindowState failed:', e.message);
     }

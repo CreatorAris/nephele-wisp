@@ -178,7 +178,7 @@ Scope: image-post draft upload across B站 / 小红书 / 微博.
 | `system.hello` | ext → neph | handshake |
 | `system.heartbeat` | both | liveness |
 | `system.disconnect_reason` | either | graceful disconnect notice |
-| `system.window_state` | ext → neph | event, ext ≥0.5.1: `{count}` of normal browser windows, pushed on handshake + every window open/close. `count=0` = browser alive but windowless (startup boost) → desktop shows standby state. NMH must list it in `FORWARDED_SYSTEM_TYPES`. |
+| `system.window_state` | ext → neph | event, ext ≥0.5.1: `{count, browser}` — count of normal browser windows (pushed on handshake + every window open/close) plus which browser the extension lives in (`edge`/`chrome`, drives the desktop's auto-launch browser pick). `count=0` = browser alive but windowless (startup boost) → desktop shows standby state. NMH must list it in `FORWARDED_SYSTEM_TYPES`. |
 | `publisher.upload_draft` | neph → ext | fill upload form on a platform |
 | `publisher.progress` | ext → neph | step-by-step progress event |
 | `publisher.captcha_detected` | ext → neph | pause, user action required |
