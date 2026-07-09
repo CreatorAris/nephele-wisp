@@ -582,8 +582,14 @@ async function reportWindowState() {
         const count = wins.filter((w) => w.type === 'normal').length;
         // browser rides along so the desktop's auto-launch bootstrap spawns
         // the browser Wisp actually lives in (daily-Chrome users) instead
-        // of unconditionally popping Edge.
-        send(envelope('event', 'system.window_state', { count, browser: detectBrowser() }));
+        // of unconditionally popping Edge. ext_id lets the desktop tell the
+        // fast-channel (unpacked) copy from the store copy — drives the
+        // "installed on disk but not yet loaded in the browser" walkthrough.
+        send(envelope('event', 'system.window_state', {
+            count,
+            browser: detectBrowser(),
+            ext_id: chrome.runtime.id,
+        }));
     } catch (e) {
         error('reportWindowState failed:', e.message);
     }
