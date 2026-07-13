@@ -4,7 +4,6 @@
   "path": "${NEPHELE_WRAPPER_PATH}",
   "type": "stdio",
   "allowed_origins": [
-    "chrome-extension://${DEV_UNPACKED_ID}/",
-    "chrome-extension://${PROD_WEB_STORE_ID}/"
+    "chrome-extension://fddgbflejpiodmhflebicicphlfobamj/"
   ]
 }
