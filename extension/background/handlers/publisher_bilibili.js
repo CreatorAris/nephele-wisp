@@ -49,19 +49,24 @@ const UPLOAD_FAILED_SELECTOR = '.bili-pics-uploader__item.failed, .bili-pics-upl
 const PUBLISH_BTN_SELECTOR = '.bili-dyn-publishing__action.launcher';
 const TOPIC_INPUT_SELECTOR = '.bili-topic-search__input';
 
-// FSA-disable stub. Runs via Page.addScriptToEvaluateOnNewDocument so
-// it executes BEFORE any page script — critical, because B站's bundle
-// captures showOpenFilePicker at module-load time. Setting the property
-// to undefined (and using defineProperty to also trip feature detection
-// like `'showOpenFilePicker' in window`... actually that still returns
-// true because we set the property. We use a getter that throws the
-// TypeError shape we'd get if the API weren't there).
+// Pre-page-load stub (Page.addScriptToEvaluateOnNewDocument), two layers:
 //
-// Why this works: B站's publisher is built with progressive enhancement
-// — it prefers FSA when available, but has a <input type="file">
-// fallback for browsers without FSA. By hiding FSA, B站 takes the
-// fallback path, which plays nicely with CDP's standard file-chooser
-// interception.
+// 1. FSA disable — B站 builds up to ~2026-07 preferred
+//    window.showOpenFilePicker (captured at module-load time) with an
+//    <input type="file"> fallback. Hiding FSA forces the fallback,
+//    which plays nicely with CDP file-chooser interception. Kept for
+//    A/B tolerance even though current builds dropped FSA entirely.
+//
+// 2. File-input click trap — the 2026-07-14 bundle creates a DETACHED
+//    <input type="file"> (uploader._init: createElement, never appended)
+//    and .click()s it from the + tile handler. Chooser interception does
+//    NOT reliably emit Page.fileChooserOpened for detached inputs, so
+//    the old event-wait path times out. The trap swallows programmatic
+//    clicks on file inputs and stashes the element on
+//    window.__nephele_file_input; the handler then delivers files
+//    directly via DOM.setFileInputFiles({ objectId }) — no dialog, no
+//    chooser event needed. setFileInputFiles fires input/change itself,
+//    so B站's change listener runs as if the user picked files.
 const FSA_DISABLE_STUB = `
 (function () {
     try { delete window.showOpenFilePicker; } catch (_) {}
@@ -72,6 +77,19 @@ const FSA_DISABLE_STUB = `
     // value so \`typeof fn === 'function'\` checks fail.
     try { Object.defineProperty(window, 'showOpenFilePicker', { value: undefined, configurable: true }); } catch (_) {}
     try { Object.defineProperty(window, 'chooseFileSystemEntries', { value: undefined, configurable: true }); } catch (_) {}
+    try {
+        const origClick = HTMLInputElement.prototype.click;
+        HTMLInputElement.prototype.click = function () {
+            if ((this.type || '').toLowerCase() === 'file') {
+                window.__nephele_file_input = this;
+                // One-shot: restore immediately so the user's own manual
+                // uploads in this (kept-open) review tab work natively.
+                HTMLInputElement.prototype.click = origClick;
+                return;  // swallow: files arrive via DOM.setFileInputFiles
+            }
+            return origClick.call(this);
+        };
+    } catch (_) {}
 })();
 `;
 
@@ -297,13 +315,19 @@ async function uploadImages(session, localPaths) {
 
     await session.waitForVisible(PIC_ADD_SELECTOR, { timeoutMs: 8000 });
 
-    // Intercept was enabled up-front at handler start (before navigate),
-    // so the native OS dialog is already fully suppressed. We only need
-    // to set up the one-shot listener for the next fileChooserOpened
-    // event, then click. B站's <input type="file"> has the `multiple`
-    // attribute, so a single setFileInputFiles call with N paths uploads
-    // all images in one go.
-    const chooserPromise = session.waitForFileChooser({ timeoutMs: 8000 });
+    // Two delivery paths, raced (see FSA_DISABLE_STUB comment):
+    //   a. click trap — current B站 bundle clicks a DETACHED file input;
+    //      the stub stashes it on window.__nephele_file_input and we set
+    //      files via objectId.
+    //   b. fileChooserOpened event — older bundles whose input reaches a
+    //      real chooser (intercept was enabled up-front, before navigate,
+    //      so the native OS dialog is fully suppressed).
+    // B站's <input type="file"> has the `multiple` attribute, so a single
+    // setFileInputFiles call with N paths uploads all images in one go.
+    let chooserEvt = null;
+    session.waitForFileChooser({ timeoutMs: 9000 })
+        .then((c) => { chooserEvt = c; })
+        .catch(() => { /* timeout is fine — trap path may win */ });
 
     // Coord click — trusted user gesture is REQUIRED. Chrome blocks
     // programmatic clicks from opening file pickers even for traditional
@@ -312,11 +336,38 @@ async function uploadImages(session, localPaths) {
     // does NOT.
     await session.click(PIC_ADD_SELECTOR);
 
-    const chooser = await chooserPromise;
-    await session.send('DOM.setFileInputFiles', {
-        backendNodeId: chooser.backendNodeId,
-        files: localPaths,
-    });
+    const deadline = Date.now() + 8000;
+    let delivered = false;
+    while (Date.now() < deadline) {
+        if (chooserEvt) {
+            await session.send('DOM.setFileInputFiles', {
+                backendNodeId: chooserEvt.backendNodeId,
+                files: localPaths,
+            });
+            delivered = true;
+            break;
+        }
+        const r = await session.send('Runtime.evaluate', {
+            expression: 'window.__nephele_file_input || null',
+            returnByValue: false,
+        });
+        if (r && r.result && r.result.objectId) {
+            await session.send('DOM.setFileInputFiles', {
+                objectId: r.result.objectId,
+                files: localPaths,
+            });
+            delivered = true;
+            break;
+        }
+        await sleep(150);
+    }
+    if (!delivered) {
+        const err = new Error(
+            'TIMEOUT: neither a trapped file input nor a file chooser appeared in 8000ms',
+        );
+        err.code = 'TIMEOUT';
+        throw err;
+    }
 }
 
 async function waitForUploadComplete(session, { timeoutMs = 25000, expectedCount = 1 } = {}) {
