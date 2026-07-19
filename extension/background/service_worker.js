@@ -18,7 +18,7 @@
  * Protocol: see docs/PROTOCOL.md (v1).
  */
 
-import { CdpSession, withCdpTab, classifyCdpError } from './cdp.js';
+import { CdpSession, withCdpTab, classifyCdpError, sweepOrphanTabs, clearOrphanTabLedger } from './cdp.js';
 import { handleBilibiliUploadDraft } from './handlers/publisher_bilibili.js';
 import { handleXiaohongshuUploadDraft } from './handlers/publisher_xiaohongshu.js';
 import { handleWeiboUploadDraft } from './handlers/publisher_weibo.js';
@@ -723,8 +723,17 @@ chrome.runtime.onInstalled.addListener(() => {
     connect();
 });
 
+// Every SW start (idle wake, post-update reload): close capture tabs whose
+// withCdpTab cleanup never ran because the previous SW died mid-capture.
+// Delayed so a real browser launch lets onStartup drop the stale ledger
+// first (extension reloads don't fire onStartup and sweep normally).
+setTimeout(() => { sweepOrphanTabs(); }, 2000);
+
 chrome.runtime.onStartup.addListener(() => {
     log('onStartup');
+    // Browser relaunch: every ledger tab id is stale, and session restore
+    // may recycle one onto a tab the user opened — drop, don't sweep.
+    clearOrphanTabLedger();
     connect();
 });
 

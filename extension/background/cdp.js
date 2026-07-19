@@ -626,8 +626,73 @@ async function createTabEnsuringWindow(url, active) {
     }
 }
 
+// ── Orphan-tab ledger ──
+// A capture tab is written here right after creation and removed in
+// withCdpTab's finally. If the SW dies mid-capture (runtime.reload()
+// on a fast-channel update, browser kill), finally never runs and the
+// tab outlives its capture. sweepOrphanTabs() on the next SW start
+// closes those leftovers — matched by id AND origin, so a recycled
+// tab id from a previous browser session can never take down a tab
+// the user opened themselves.
+const ORPHAN_LEDGER_KEY = 'wisp_cdp_orphan_tabs';
+
+async function _ledgerRead() {
+    const s = await chrome.storage.local.get(ORPHAN_LEDGER_KEY);
+    return s[ORPHAN_LEDGER_KEY] || [];
+}
+
+async function _ledgerWrite(rows) {
+    await chrome.storage.local.set({ [ORPHAN_LEDGER_KEY]: rows });
+}
+
+async function _ledgerAdd(tabId, url) {
+    const rows = (await _ledgerRead()).filter((r) => r.id !== tabId);
+    rows.push({ id: tabId, origin: new URL(url).origin });
+    await _ledgerWrite(rows);
+}
+
+async function _ledgerRemove(tabId) {
+    await _ledgerWrite((await _ledgerRead()).filter((r) => r.id !== tabId));
+}
+
+// Browser restart invalidates every tab id in the ledger — and worse,
+// session restore can hand a recycled id to a tab the user actually
+// wants (same site ⇒ origin match ⇒ sweep would kill it). onStartup
+// fires only on real browser launch, so it drops the ledger instead.
+export async function clearOrphanTabLedger() {
+    try { await _ledgerWrite([]); } catch (_) { /* noop */ }
+}
+
+export async function sweepOrphanTabs() {
+    let rows;
+    try { rows = await _ledgerRead(); } catch (_) { return; }
+    for (const row of rows) {
+        try {
+            const tab = await new Promise((resolve) => {
+                chrome.tabs.get(row.id, (t) => {
+                    void chrome.runtime.lastError;
+                    resolve(t || null);
+                });
+            });
+            if (tab && typeof tab.url === 'string' && tab.url.startsWith(row.origin)) {
+                await new Promise((resolve) => {
+                    chrome.tabs.remove(row.id, () => {
+                        void chrome.runtime.lastError;
+                        resolve();
+                    });
+                });
+                console.log('[cdp] swept orphan capture tab', row.id, row.origin);
+            }
+        } catch (_) { /* tab already gone */ }
+        // Row is consumed either way — removed per-id (not a bulk clear)
+        // so a capture that started while we sweep keeps its ledger row.
+        try { await _ledgerRemove(row.id); } catch (_) { /* noop */ }
+    }
+}
+
 export async function withCdpTab(initialUrl, fn, { keepTab = false, active = false } = {}) {
     const tab = await createTabEnsuringWindow(initialUrl, active);
+    try { await _ledgerAdd(tab.id, initialUrl); } catch (_) { /* ledger is best-effort */ }
     const session = new CdpSession(tab.id);
     try {
         await session.attach();
@@ -650,6 +715,9 @@ export async function withCdpTab(initialUrl, fn, { keepTab = false, active = fal
                 });
             } catch (_) { /* noop */ }
         }
+        // keepTab tabs are intentional (publisher drafts) — either way
+        // this tab is no longer ours to sweep.
+        try { await _ledgerRemove(tab.id); } catch (_) { /* noop */ }
     }
 }
 
