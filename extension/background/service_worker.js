@@ -28,6 +28,7 @@ import { handleTwitterUploadDraft } from './handlers/publisher_twitter.js';
 import { handleArtstationUploadDraft } from './handlers/publisher_artstation.js';
 import { fetchBilibiliStats } from './handlers/creator_bilibili.js';
 import { fetchPixivStats } from './handlers/creator_pixiv.js';
+import { fetchXStats } from './handlers/creator_x.js';
 import { fetchPinterestReferences } from './handlers/reference_pinterest.js';
 import { fetchArtstationReferences } from './handlers/reference_artstation.js';
 import { fetchHuabanReferences } from './handlers/reference_huaban.js';
@@ -344,6 +345,7 @@ async function handleCreatorFetchStats(payload) {
     const dispatchTable = {
         bilibili: fetchBilibiliStats,
         pixiv: fetchPixivStats,
+        x: fetchXStats,
     };
     const fn = dispatchTable[platform];
     if (!fn) {
