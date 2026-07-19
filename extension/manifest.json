@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Nephele Wisp",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAoAEAv+Q8U3F8M5wsmtFa6xNUZqcaBs3t4RON50QjSD2NgYH3cIU0b/lI98CqwYwRdV2h1sr82r/zEyY/0nrOPIN59neFdG2xCak5zcaBn2Bud72SBlCqEljOv28sjc6twzYQORu5HlsEWORxfK7wQ2GubxgqcrYB9yxqn35Vsi2mPUy1McYEXIUWjQI0tajPA0koXvXlpsWSyQ2YnkdhJUInKjQq/+4IQ4ELgMjFyQguT88pUrP1fm1L5bQSduqbWV0bzeacSEBm9UmAWOEgtkuF/3SkODRxRtZyESraUcjIRs1INyRAXd0/BFsAGKdlpOycykphfSS0ZVv1sllQNwIDAQAB",
   "description": "Browser-side companion for Nephele Workshop. Uses your real browser so platforms see you, not a bot.",
   "author": "ArisFusion",
@@ -37,7 +37,9 @@
   ],
   "commands": {
     "clip-page": {
-      "suggested_key": { "default": "Alt+Shift+S" },
+      "suggested_key": {
+        "default": "Alt+Shift+S"
+      },
       "description": "保存当前页面到 Nephele"
     }
   },
