@@ -216,6 +216,36 @@ export async function extractPageResources(payload) {
                 }
             }
 
+            // Lazy loaders (Swiper's swiper-lazy, lazysizes, …) park the real
+            // URL in a data-* attribute until the slide is activated. Scrolling
+            // the page does NOT activate a carousel, so a scan can run while
+            // every slide is still blank: zzz.mihoyo.com serves its 1297x1369
+            // character art as a lazy background and the passes above saw none
+            // of it — only the site logo and the 79x82 roster thumbnails.
+            // Deliberately no minPx gate here: an unactivated slide has no laid
+            // out box, and dropping the art is worse than admitting an icon.
+            const LAZY_ATTRS = ['data-background', 'data-src', 'data-original', 'data-lazy', 'data-bg'];
+            const lazySel = LAZY_ATTRS.map((a) => `[${a}]`).join(',') + ',[data-srcset]';
+            for (const el of Array.from(document.querySelectorAll(lazySel))) {
+                if (out.length >= cap * 5) break;
+                let url = '';
+                for (const a of LAZY_ATTRS) {
+                    const v = el.getAttribute(a);
+                    if (v) { url = v; break; }
+                }
+                if (!url) url = bestFromSrcset(el.getAttribute('data-srcset'));
+                if (!url) continue;
+                const rect = el.getBoundingClientRect();
+                add(out, seen, {
+                    url: abs(url),
+                    page_url: location.href,
+                    alt: el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('alt') || '',
+                    width: Math.round(rect.width) || 0,
+                    height: Math.round(rect.height) || 0,
+                    source_type: 'lazy',
+                });
+            }
+
             const perf = performance.getEntriesByType('resource') || [];
             for (const entry of perf) {
                 if (out.length >= cap * 5) break;
@@ -234,9 +264,29 @@ export async function extractPageResources(payload) {
         }, [maxItems, minSize]);
 
         const finalUrl = await session.getUrl();
+
+        // Collection runs <img> → <source> → background → lazy → performance,
+        // and the cut below is a plain "first maxItems". On a page carrying 193
+        // nav icons and roster thumbnails that spends every slot before the
+        // background pass contributes — zzz.mihoyo.com's 1297x1369 character
+        // art was collected and then ranked off the end, so the picker showed
+        // the site logo instead. Rank by pixel area so the artwork survives.
+        // A lazy slide has no laid-out box, so score it as art-sized rather
+        // than zero: an unactivated carousel slide is usually the thing the
+        // user came for. Performance entries stay last — they are guesses.
+        const _rank = (it) => {
+            const area = (it.width || 0) * (it.height || 0);
+            if (area) return area;
+            const t = String(it.source_type || '');
+            if (t === 'lazy') return 360000;
+            if (t === 'source') return 10000;
+            return 1;
+        };
+        const ranked = (candidates || []).slice().sort((a, b) => _rank(b) - _rank(a));
+
         const filtered = [];
         const seen = new Set();
-        for (const item of candidates || []) {
+        for (const item of ranked) {
             const normalized = _normalizeUrl(item.url, finalUrl);
             if (!normalized || seen.has(normalized)) continue;
             // Trust DOM-confident sources (img / source / background) — the
@@ -320,12 +370,24 @@ export async function extractPageResources(payload) {
             }
         }
 
+        // The caller can't see where it landed. A 404 or a wiki's generic shell
+        // still yields a pageful of chrome images, and the desktop side has been
+        // reporting those as "official artwork" because nothing in the result
+        // said which page they came from. The title is the cheapest tell:
+        // 「达妮娅 - 中文Minecraft Wiki镜像」 and 「bilibili游戏中心 - WIKI」 both
+        // announce the mistake outright.
+        let pageTitle = '';
+        try {
+            pageTitle = await session.evaluateFn(() => document.title || '');
+        } catch (_) { /* title is a nicety — never fail the extraction over it */ }
+
         return {
             items,
             skipped,
             total: items.length,
             candidate_count: filtered.length,
             final_url: finalUrl,
+            page_title: pageTitle,
             inline_bytes: totalBytes,
         };
     }, { keepTab: false, active: false });
@@ -370,24 +432,12 @@ export async function fetchFullImages(payload) {
             let usedUrl = url;
             for (const cand of candidates) {
                 const isLast = cand === candidates[candidates.length - 1];
-        // The caller can't see where it landed. A 404 or a wiki's generic shell
-        // still yields a pageful of chrome images, and the desktop side has been
-        // reporting those as "official artwork" because nothing in the result
-        // said which page they came from. The title is the cheapest tell:
-        // 「达妮娅 - 中文Minecraft Wiki镜像」 and 「bilibili游戏中心 - WIKI」 both
-        // announce the mistake outright.
-        let pageTitle = '';
-        try {
-            pageTitle = await session.evaluateFn(() => document.title || '');
-        } catch (_) { /* title is a nicety — never fail the extraction over it */ }
-
                 const controller = new AbortController();
                 const timer = setTimeout(() => controller.abort(), isLast ? FULL_FETCH_TIMEOUT_MS : 8000);
                 try {
                     const r = await fetch(cand, { credentials: 'include', signal: controller.signal });
                     const ct = (r.headers.get('content-type') || '').toLowerCase();
                     if (r.ok && (!ct || ct.startsWith('image/') || ct.includes('octet-stream'))) {
-            page_title: pageTitle,
                         resp = r;
                         usedUrl = cand;
                         break;
