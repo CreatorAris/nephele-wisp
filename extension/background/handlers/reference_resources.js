@@ -370,12 +370,24 @@ export async function fetchFullImages(payload) {
             let usedUrl = url;
             for (const cand of candidates) {
                 const isLast = cand === candidates[candidates.length - 1];
+        // The caller can't see where it landed. A 404 or a wiki's generic shell
+        // still yields a pageful of chrome images, and the desktop side has been
+        // reporting those as "official artwork" because nothing in the result
+        // said which page they came from. The title is the cheapest tell:
+        // 「达妮娅 - 中文Minecraft Wiki镜像」 and 「bilibili游戏中心 - WIKI」 both
+        // announce the mistake outright.
+        let pageTitle = '';
+        try {
+            pageTitle = await session.evaluateFn(() => document.title || '');
+        } catch (_) { /* title is a nicety — never fail the extraction over it */ }
+
                 const controller = new AbortController();
                 const timer = setTimeout(() => controller.abort(), isLast ? FULL_FETCH_TIMEOUT_MS : 8000);
                 try {
                     const r = await fetch(cand, { credentials: 'include', signal: controller.signal });
                     const ct = (r.headers.get('content-type') || '').toLowerCase();
                     if (r.ok && (!ct || ct.startsWith('image/') || ct.includes('octet-stream'))) {
+            page_title: pageTitle,
                         resp = r;
                         usedUrl = cand;
                         break;
