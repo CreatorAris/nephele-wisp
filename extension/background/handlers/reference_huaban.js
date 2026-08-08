@@ -38,6 +38,25 @@ import { sleep, preActionDelay } from '../humanize.js';
 const SEARCH_URL_BASE = 'https://huaban.com/search?q=';
 const PIN_LINK_SELECTOR = 'a[href^="/pins/"]';
 
+// Huaban sits behind Tencent Cloud EdgeOne, which intermittently serves a
+// "prove you're human" interstitial instead of the site. The browser normally
+// holds a clearance cookie and we never see it, which is why the same query
+// succeeds for one user and fails for another on the same day. When it does
+// appear, the pin grid never renders and the old code reported DOM_NOT_FOUND —
+// i.e. "our extractor broke", sending everyone hunting for stale selectors.
+// The selectors are fine; the page simply isn't huaban.
+//
+// Verified 2026-08-08 against the live site: title "Security Verification",
+// body "正在验证连接安全性，请勾选下方复选框。… Protected by Tencent Cloud EdgeOne".
+// Matched on several independent markers so a copy tweak on their side
+// degrades to the old DOM_NOT_FOUND rather than a wrong diagnosis.
+const CHALLENGE_MARKERS = [
+    'Tencent Cloud EdgeOne',
+    'Security Verification',
+    '正在验证连接安全性',
+    '验证完成后',
+];
+
 const DEFAULT_SCROLL_ROUNDS = 4;
 const DEFAULT_MAX_ITEMS = 24;        // cap lower than Pinterest — bytes weigh more
 const DEFAULT_GRID_TIMEOUT_MS = 15_000;
@@ -89,9 +108,42 @@ export async function fetchHuabanReferences(payload) {
             });
         } catch (e) {
             const finalUrl = await session.getUrl();
-            const err = new Error('DOM_NOT_FOUND: huaban pin grid never rendered');
+            // Before blaming the extractor, look at what the page actually is.
+            let probe = null;
+            try {
+                probe = await session.evaluateFn(() => ({
+                    title: document.title || '',
+                    text: ((document.body && document.body.innerText) || '').slice(0, 400),
+                }));
+            } catch (_) { /* page may be mid-navigation — fall through */ }
+
+            const haystack = `${probe?.title || ''}\n${probe?.text || ''}`;
+            const hit = CHALLENGE_MARKERS.find((m) => haystack.includes(m));
+            if (hit) {
+                const err = new Error(
+                    'CAPTCHA_REQUIRED: huaban is behind an EdgeOne human-verification page',
+                );
+                err.code = 'CAPTCHA_REQUIRED';
+                err.data = { final_url: finalUrl, matched: hit };
+                throw err;
+            }
+
+            // Genuinely no grid and no challenge. Keep the honest code, but
+            // carry evidence so the next occurrence is diagnosable instead of
+            // guesswork — this is the branch a real DOM change would land in.
+            // The title rides in the MESSAGE, not just `data`: the desktop
+            // logs `err_obj.message` and drops `data`, so anything only in
+            // `data` is invisible where the diagnosis actually happens.
+            const err = new Error(
+                'DOM_NOT_FOUND: huaban pin grid never rendered'
+                + ` (title=${JSON.stringify(probe?.title || '')})`,
+            );
             err.code = 'DOM_NOT_FOUND';
-            err.data = { final_url: finalUrl };
+            err.data = {
+                final_url: finalUrl,
+                page_title: probe?.title || '',
+                page_head: (probe?.text || '').slice(0, 200),
+            };
             throw err;
         }
 
