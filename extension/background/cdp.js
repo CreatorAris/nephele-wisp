@@ -380,11 +380,51 @@ export class CdpSession {
         return r.value;
     }
 
+    // Like evaluateFn but for async page functions — awaits the promise
+    // in the page before returning its resolved value. fetch() in page
+    // context is NOT throttled in background tabs, unlike rAF/timers,
+    // so this is the reliable channel for data extraction there.
+    async evaluateAsyncFn(fn, args = []) {
+        const argsJson = JSON.stringify(args);
+        const expr = `(${fn.toString()}).apply(null, ${argsJson})`;
+        const r = await this.send('Runtime.evaluate', {
+            expression: expr,
+            returnByValue: true,
+            awaitPromise: true,
+        });
+        if (r.exceptionDetails) {
+            const desc = (r.exceptionDetails.exception && r.exceptionDetails.exception.description)
+                || r.exceptionDetails.text || 'evaluateAsyncFn failed';
+            throw new Error(`evaluateAsyncFn: ${desc}`);
+        }
+        return r.result.value;
+    }
+
+    // Force one BeginFrame in a backgrounded renderer. Chrome fully parks
+    // rAF in inactive tabs, so rAF-gated hydration (Pinterest's search
+    // masonry) never runs no matter how long we wait — focus emulation
+    // alone doesn't lift the frame throttle. A CDP screenshot request
+    // does: the renderer must produce a frame to satisfy it, and every
+    // pending rAF callback runs with that frame. Undetectable from the
+    // page world, unlike prototype shims on document.visibilityState.
+    async pumpFrame() {
+        try {
+            await this.send('Page.captureScreenshot', {
+                format: 'jpeg',
+                quality: 10,
+                optimizeForSpeed: true,
+            });
+        } catch (_) { /* best-effort — never fail the caller */ }
+    }
+
     // Wait until at least one of the selectors is present. Returns the
     // first matching selector. Throws DOM_NOT_FOUND on timeout.
-    async waitForAnySelector(selectors, { timeoutMs = 10000, pollMs = 250 } = {}) {
+    // framePump: drive a BeginFrame per poll so rAF-gated renderers
+    // make progress in background tabs (see pumpFrame).
+    async waitForAnySelector(selectors, { timeoutMs = 10000, pollMs = 250, framePump = false } = {}) {
         const deadline = Date.now() + timeoutMs;
         while (Date.now() < deadline) {
+            if (framePump) await this.pumpFrame();
             for (const sel of selectors) {
                 const r = await this.evaluate(
                     `!!document.querySelector(${JSON.stringify(sel)})`,
@@ -636,6 +676,14 @@ async function createTabEnsuringWindow(url, active) {
 // the user opened themselves.
 const ORPHAN_LEDGER_KEY = 'wisp_cdp_orphan_tabs';
 
+// Captures started in THIS SW life. The sweeper must never touch these:
+// its 2s start delay does not guarantee it runs before the first capture
+// — a request arriving right after SW wake creates its tab inside the
+// window, and the sweep would kill the live capture it just ledgered
+// (id + origin match). Orphans from a dead SW life are by definition
+// not in this set, so skipping live ids never leaks a real orphan.
+const _liveCaptureTabs = new Set();
+
 async function _ledgerRead() {
     const s = await chrome.storage.local.get(ORPHAN_LEDGER_KEY);
     return s[ORPHAN_LEDGER_KEY] || [];
@@ -646,12 +694,14 @@ async function _ledgerWrite(rows) {
 }
 
 async function _ledgerAdd(tabId, url) {
+    _liveCaptureTabs.add(tabId);
     const rows = (await _ledgerRead()).filter((r) => r.id !== tabId);
     rows.push({ id: tabId, origin: new URL(url).origin });
     await _ledgerWrite(rows);
 }
 
 async function _ledgerRemove(tabId) {
+    _liveCaptureTabs.delete(tabId);
     await _ledgerWrite((await _ledgerRead()).filter((r) => r.id !== tabId));
 }
 
@@ -667,6 +717,7 @@ export async function sweepOrphanTabs() {
     let rows;
     try { rows = await _ledgerRead(); } catch (_) { return; }
     for (const row of rows) {
+        if (_liveCaptureTabs.has(row.id)) continue; // active capture, not an orphan
         try {
             const tab = await new Promise((resolve) => {
                 chrome.tabs.get(row.id, (t) => {
