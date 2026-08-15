@@ -126,14 +126,26 @@ export async function extractPageResources(payload) {
     const minSize = Math.max(0, parseInt(payload?.min_size, 10) || 160);
     const totalInlineLimit = Math.min(900_000, Math.max(80_000,
         parseInt(payload?.max_total_bytes, 10) || DEFAULT_TOTAL_INLINE_BYTES));
+    // Callers extracting from SPA feeds pass a short budget: the grid is
+    // rendered within seconds while the load event trails by 30s+, and the
+    // wasted wait pushes total handler time toward the SW kill window.
+    const navTimeoutMs = Math.min(60_000, Math.max(5_000,
+        parseInt(payload?.nav_timeout_ms, 10) || DEFAULT_NAV_TIMEOUT_MS));
 
     return await withCdpTab(url, async (session) => {
+        let navTimedOut = false;
         try {
-            await session.navigate(url, { timeoutMs: DEFAULT_NAV_TIMEOUT_MS });
+            await session.navigate(url, { timeoutMs: navTimeoutMs });
         } catch (e) {
-            const err = new Error(`TIMEOUT: page load failed (${e?.message || e})`);
-            err.code = 'TIMEOUT';
-            throw err;
+            // Heavy SPA feeds (B站 space dynamics and other infinite
+            // scrollers) keep the load event hostage to analytics/websocket
+            // stragglers — the grid has long rendered when the nav budget
+            // expires. Failing hard here returned TIMEOUT for perfectly
+            // extractable pages (hit live on space.bilibili.com/*/dynamic,
+            // 2026-08-15). Proceed and let extraction speak: a genuinely
+            // dead navigation yields zero candidates, which callers already
+            // handle; the flag below keeps the slow-load fact observable.
+            navTimedOut = true;
         }
 
         for (let i = 0; i < scrollRounds; i++) {
@@ -389,6 +401,7 @@ export async function extractPageResources(payload) {
             final_url: finalUrl,
             page_title: pageTitle,
             inline_bytes: totalBytes,
+            nav_timed_out: navTimedOut,
         };
     }, { keepTab: false, active: false });
 }

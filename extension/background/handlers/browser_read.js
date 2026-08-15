@@ -324,6 +324,12 @@ export async function readPage(payload) {
     }
 
     const navTimeout = clampInt(payload?.nav_timeout_ms, 3000, 60_000, DEFAULT_NAV_TIMEOUT_MS);
+    // Soft navigation: on a LOAD-EVENT timeout, extract what rendered
+    // instead of failing. SPA feeds (B站 space dynamics) paint their grid in
+    // seconds while the load event trails 30s+ behind analytics/websocket
+    // stragglers; callers reading such pages set nav_soft + a short budget.
+    // Non-timeout navigation failures (net error, discarded tab) still throw.
+    const navSoft = payload?.nav_soft === true;
     const scrollRounds = clampInt(payload?.scroll_rounds, 0, HARD_SCROLL_ROUNDS, DEFAULT_SCROLL_ROUNDS);
     const extractOpts = buildExtractOpts(payload);
 
@@ -337,9 +343,11 @@ export async function readPage(payload) {
             // hard-coding TIMEOUT for all of them obscures triage.
             const msg = (e && e.message) || String(e);
             const isTimeout = /^TIMEOUT/i.test(msg);
-            const err = new Error(isTimeout ? msg : `page navigation failed: ${msg}`);
-            err.code = isTimeout ? 'TIMEOUT' : ((e && e.code) || 'INTERNAL');
-            throw err;
+            if (!(navSoft && isTimeout)) {
+                const err = new Error(isTimeout ? msg : `page navigation failed: ${msg}`);
+                err.code = isTimeout ? 'TIMEOUT' : ((e && e.code) || 'INTERNAL');
+                throw err;
+            }
         }
 
         for (let i = 0; i < scrollRounds; i++) {
