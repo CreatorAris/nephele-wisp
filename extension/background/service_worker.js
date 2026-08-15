@@ -74,6 +74,10 @@ let connected = false;
 let reconnectAttempts = 0;
 let lastStatusBroadcast = 0;
 let heartbeatFailures = 0;
+// Alarm ticks spent in the port-open-but-not-handshaken state. Grace
+// counter for the watchdog: 0 = healthy/first sighting, 1 = already saw
+// this state one tick ago, recycle the port now.
+let handshakeStalledTicks = 0;
 
 const pendingResponses = new Map();  // id -> callback(response)
 
@@ -506,6 +510,7 @@ function handleEvent(msg) {
             sessionToken = null;
             nepheleVersion = null;
             heartbeatFailures = 0;
+            handshakeStalledTicks = 0;
             broadcastStatus();
             const dead = port;
             port = null;
@@ -556,6 +561,7 @@ async function performHandshake() {
         connected = result.ui_online !== false;
         reconnectAttempts = 0;
         heartbeatFailures = 0;
+        handshakeStalledTicks = 0;
         log('handshake ok, nephele', nepheleVersion,
             'ui_online=', connected);
         startHeartbeat();
@@ -642,6 +648,7 @@ async function connect() {
         sessionToken = null;
         nepheleVersion = null;
         heartbeatFailures = 0;
+        handshakeStalledTicks = 0;
         // Intentionally NOT calling stopHeartbeat() here. The alarm is now
         // the only event source guaranteed to fire after MV3 suspends the
         // SW — clearing it would orphan the extension if the SW is recycled
@@ -768,7 +775,27 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
         connect();
         return;
     }
-    if (!connected) return;
+    if (!connected) {
+        // Port is open but the handshake never completed (NMH alive with
+        // the Workshop UI down, or the hello timed out). This state used to
+        // be PERMANENT: `!port` was false so no reconnect ever ran, and
+        // this early-return skipped the heartbeat that would have detected
+        // the dead pipe — the SW then woke every 30s to do exactly nothing.
+        // One tick of grace covers an in-flight handshake (hello timeout
+        // 10s < alarm period 30s); after that, recycle the port and retry.
+        if (!handshakeStalledTicks) {
+            handshakeStalledTicks = 1;
+            return;
+        }
+        handshakeStalledTicks = 0;
+        warn('port open but never handshook — recycling port');
+        const dead = port;
+        port = null;
+        try { dead?.disconnect(); } catch (err) { /* ignore */ }
+        connect();
+        return;
+    }
+    handshakeStalledTicks = 0;
     try {
         await request('system.heartbeat', { ts: Date.now() }, 5000);
         heartbeatFailures = 0;
@@ -799,4 +826,14 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 // Also connect on SW wakeup — MV3 service workers may be started for
 // various events (alarms, messages, installed) and we want the NMH
 // connection up whenever the SW is alive.
+//
+// Arm the watchdog alarm on EVERY SW boot, not only after a successful
+// handshake (startHeartbeat used to run solely from performHandshake).
+// Without this, a boot whose connect()/handshake fails outright — and
+// whose profile never armed the alarm in a past life — has only
+// scheduleReconnect's setTimeout left, which MV3 destroys with the SW:
+// the extension then stays dead until an unrelated event wakes it.
+// chrome.alarms.create with the same name replaces the existing alarm,
+// so re-arming here is idempotent and keeps the ≤30s cadence.
+startHeartbeat();
 connect();
