@@ -29,6 +29,8 @@ import { handleArtstationUploadDraft } from './handlers/publisher_artstation.js'
 import { fetchBilibiliStats } from './handlers/creator_bilibili.js';
 import { fetchPixivStats } from './handlers/creator_pixiv.js';
 import { fetchXStats } from './handlers/creator_x.js';
+import { fetchMihuashiOrders } from './handlers/orders_mihuashi.js';
+import { fetchHuajiaOrders } from './handlers/orders_huajia.js';
 import { fetchPinterestReferences } from './handlers/reference_pinterest.js';
 import { fetchArtstationReferences } from './handlers/reference_artstation.js';
 import { fetchHuabanReferences } from './handlers/reference_huaban.js';
@@ -233,6 +235,13 @@ function routeRequest(msg) {
             dispatchAsync(msg, handleCreatorFetchStats);
             return;
 
+        case 'orders.fetch':
+            // Read-only sweep of the user's own commission-order pages.
+            // Same observe-don't-request contract as creator.fetch_stats;
+            // never writes to the platform.
+            dispatchAsync(msg, handleOrdersFetch);
+            return;
+
         case 'reference.fetch_pinterest':
             // Read-side: open Pinterest search in CDP tab, scrape pin
             // grid via DOM walk. Bypasses headless anti-bot by running
@@ -350,6 +359,25 @@ async function handleCreatorFetchStats(payload) {
         bilibili: fetchBilibiliStats,
         pixiv: fetchPixivStats,
         x: fetchXStats,
+    };
+    const fn = dispatchTable[platform];
+    if (!fn) {
+        const err = new Error(`unsupported platform: ${platform || '(missing)'}`);
+        err.code = 'INVALID_PAYLOAD';
+        throw err;
+    }
+    return await fn(payload);
+}
+
+
+// Platform router for orders.fetch. B站工房 is absent on purpose: its
+// creator side is app-only (web has no order console to observe), so
+// that channel stays manual until a web surface exists to read.
+async function handleOrdersFetch(payload) {
+    const platform = payload.platform_key || payload.platform || '';
+    const dispatchTable = {
+        mihuashi: fetchMihuashiOrders,
+        huajia: fetchHuajiaOrders,
     };
     const fn = dispatchTable[platform];
     if (!fn) {
