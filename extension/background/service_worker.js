@@ -35,6 +35,7 @@ import { fetchPinterestReferences } from './handlers/reference_pinterest.js';
 import { fetchArtstationReferences } from './handlers/reference_artstation.js';
 import { fetchHuabanReferences } from './handlers/reference_huaban.js';
 import { extractPageResources, fetchFullImages } from './handlers/reference_resources.js';
+import { harvestBoard, stopBoardHarvest } from './handlers/reference_board.js';
 import { readPage, interactPage } from './handlers/browser_read.js';
 import { capturePage } from './handlers/browser_capture.js';
 import { installClipSurfaces } from './clip.js';
@@ -279,6 +280,25 @@ function routeRequest(msg) {
             // channel — breaks the NM 1 MB cap. Paired with the thumbnails
             // reference.extract_resources now returns.
             dispatchAsync(msg, fetchFullImages);
+            return;
+
+        case 'reference.harvest_board':
+            // Whole-board walk (Pinterest 采集板 / 花瓣画板): scroll ONE board to
+            // its bottom and stream item metadata back as board_progress events.
+            // No bytes here — the desktop pulls full-res through fetch_full, so
+            // an unbounded board never approaches the 1 MB frame cap. Selectors
+            // arrive in the payload (desktop-canonical), so a DOM change ships
+            // as a desktop self-update, not a store re-submission.
+            dispatchAsync(msg, (p) => harvestBoard(p, (type, payload) => send(
+                envelope('event', type, payload),
+            )));
+            return;
+
+        case 'reference.board_stop':
+            // Cooperative cancel for the above. Returns at once; the harvest
+            // notices at its next round and finishes normally, so everything
+            // already collected still lands.
+            dispatchAsync(msg, stopBoardHarvest);
             return;
 
         case 'browser.read_page':

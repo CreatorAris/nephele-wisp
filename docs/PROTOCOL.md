@@ -266,6 +266,9 @@ are READ-ONLY namespaces — no DOM mutation, no form fills (writes stay in
 | `reference.fetch_huaban` | neph → ext | scrape a Huaban (花瓣) search |
 | `reference.extract_resources` | neph → ext | harvest a page's images as small thumbnails (full URL kept) |
 | `reference.fetch_full` | neph → ext | fetch picked full-res images, stream bytes via HTTP ingest |
+| `reference.harvest_board` | neph → ext | walk ONE board (Pinterest 采集板 / 花瓣画板) to its bottom, metadata only |
+| `reference.board_progress` | ext → neph | item batches streamed during a board harvest |
+| `reference.board_stop` | neph → ext | cooperative cancel for a running board harvest |
 | `browser.read_page` | neph → ext | navigate any URL + extract page content |
 
 `reference.extract_resources` returns each item with a small inline JPEG
@@ -277,6 +280,51 @@ full image in the user's session and POSTs the bytes to the UI's one-time
 Native Messaging 1 MB cap. Returns `{ results: [{ url, ok, bytes?, mime?,
 reason? }], ok_count, total }` — the bytes themselves travel over HTTP, not
 the NM frame.
+
+#### `reference.harvest_board`
+
+Whole-board harvest, as distinct from the fixed-cap search scrapes above: the
+desktop names one board and the extension walks it to the bottom, however many
+pins that is.
+
+```json
+{
+    "url": "https://www.pinterest.com/<user>/<board>/",   // required
+    "harvest_id": "b7f3...",       // required, desktop-generated cancel handle
+    "rules": {                     // required, desktop-canonical selectors
+        "image": "...",            // required — the grid's image cells
+        "link": "...",             // pin permalink inside a cell
+        "box": "...",              // the cell wrapper
+        "title": "h1",             // board name → target folder name
+        "stop": "...",             // marker that the board ended and padding began
+        "spinner": "...",          // visible ⇒ still loading, stretch the idle window
+        "scroll_ele": "",          // scroll container, empty = window
+        "more_btn": "",            // click-to-load-more button
+        "exclude_ancestor": "",    // drop cells inside this (recommendation blocks)
+        "ignore_alt": false
+    },
+    "max_items": 0,                // 0 = to the bottom (5000-item / 20-min backstops)
+    "idle_ms": 12000               // quiet window that means "bottom"
+}
+```
+
+Items come back as `reference.board_progress` **events** in batches of ≤40 —
+`{ harvest_id, items: [{ url, page_url, pin_id, alt, width, height }], total,
+board_title }` — never as bytes, so an unbounded board stays far under the
+1 MB frame cap. Events and the response ride the same ordered socket, so by
+the time the response lands the desktop already holds every batch. The
+response itself is `{ harvest_id, board_title, final_url, total, stopped_by }`
+where `stopped_by` ∈ `bottom | stop_marker | navigated_away | cancelled |
+max_items | ceiling | time_limit`.
+
+Selectors live desktop-side (`core/browser/board_rules.py`) exactly like
+`fetch_full`'s `candidates`: a site DOM change ships in a desktop self-update
+rather than an extension store re-submission.
+
+`reference.board_stop({ harvest_id })` → `{ ok, running }`. Cooperative: the
+harvest finishes at its next round boundary, and everything already streamed
+stays with the desktop.
+
 | `browser.interact` | neph → ext | navigate + click/type/scroll/press/wait sequence + extract |
 | `browser.capture` | neph → ext | bounded CDP capture (screenshot / PDF / DOM), bytes via ingest |
 
