@@ -43,6 +43,12 @@ const DEFAULT_HARD_TIMEOUT_MS = 30000;
  * @param {Function} [opts.classifyResponse]
  * @param {Function} [opts.classifyFinalUrl]
  * @param {Function} [opts.afterInitialIdle] async (session) => void
+ * @param {string}   [opts.preScript]  JS injected into every new document
+ *     BEFORE the page's own scripts run (Page.addScriptToEvaluateOnNewDocument).
+ *     Needed when a SPA reads its initial state (tab filters, etc.) from
+ *     localStorage during component init — by the time we could evaluate
+ *     into a loaded page, the XHRs we wanted to influence already fired.
+ *     Implies a blank-first tab so the registration beats the navigation.
  * @returns {Promise<{captured: Object, finalUrl: string}>}
  */
 export async function captureDashboardXhrs(opts) {
@@ -55,10 +61,16 @@ export async function captureDashboardXhrs(opts) {
         classifyResponse,
         classifyFinalUrl,
         afterInitialIdle,
+        preScript,
     } = opts;
 
     return await withCdpTab(dashboardUrl, async (session, _tab) => {
         await session.send('Network.enable');
+        if (preScript) {
+            await session.send('Page.enable');
+            await session.send('Page.addScriptToEvaluateOnNewDocument', { source: preScript });
+            await session.send('Page.navigate', { url: dashboardUrl });
+        }
 
         const captured = {};
         const pendingBodies = new Map();
@@ -151,5 +163,5 @@ export async function captureDashboardXhrs(opts) {
         if (classifyFinalUrl) classifyFinalUrl(finalUrl);
 
         return { captured, finalUrl };
-    });
+    }, { blankFirst: !!preScript });
 }

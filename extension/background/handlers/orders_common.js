@@ -50,10 +50,39 @@ export function resolveViews(supplied, fallback, hostRegex) {
         views.push({
             url,
             label: (typeof entry === 'object' && entry && entry.label) || '',
+            storage: sanitizeStorage(typeof entry === 'object' && entry && entry.storage),
         });
         if (views.length >= MAX_VIEWS) break;
     }
     return views.length ? views : [];
+}
+
+// localStorage presets a view wants in place BEFORE the SPA boots —
+// string keys/values only, and only a handful. 画加's order tabs read
+// their filter from localStorage during component init (measured
+// 2026-08-22: receiveAssignmentStage defaults to "processing", so a
+// sweep never sees finished commissions unless "" = 全部 is preset).
+const MAX_STORAGE_KEYS = 8;
+
+function sanitizeStorage(storage) {
+    if (!storage || typeof storage !== 'object' || Array.isArray(storage)) return null;
+    const out = {};
+    let n = 0;
+    for (const [k, v] of Object.entries(storage)) {
+        if (typeof k !== 'string' || typeof v !== 'string') continue;
+        out[k] = v;
+        if ((n += 1) >= MAX_STORAGE_KEYS) break;
+    }
+    return n ? out : null;
+}
+
+function storagePreScript(storage) {
+    const sets = Object.entries(storage)
+        .map(([k, v]) => `localStorage.setItem(${JSON.stringify(k)}, ${JSON.stringify(v)});`)
+        .join(' ');
+    // Runs in every new document incl. sandboxed iframes where
+    // localStorage access throws — swallow, never break the page.
+    return `try { ${sets} } catch (e) {}`;
 }
 
 /**
@@ -91,6 +120,7 @@ export async function captureOrderViews(opts) {
                 classifyFinalUrl,
                 idleMs,
                 hardTimeoutMs,
+                preScript: view.storage ? storagePreScript(view.storage) : undefined,
             });
             let added = 0;
             // Smallest first: when the budget runs out, what gets dropped
