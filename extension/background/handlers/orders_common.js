@@ -51,6 +51,7 @@ export function resolveViews(supplied, fallback, hostRegex) {
             url,
             label: (typeof entry === 'object' && entry && entry.label) || '',
             storage: sanitizeStorage(typeof entry === 'object' && entry && entry.storage),
+            click: sanitizeClick(typeof entry === 'object' && entry && entry.click),
         });
         if (views.length >= MAX_VIEWS) break;
     }
@@ -74,6 +75,37 @@ function sanitizeStorage(storage) {
         if ((n += 1) >= MAX_STORAGE_KEYS) break;
     }
     return n ? out : null;
+}
+
+// After the first XHR storm settles, click the in-page tab whose exact
+// text matches `click`, then capture a second idle window. Needed for
+// components that hardcode their initial filter in memory (画加's
+// CommissionReceived boots at stage="processing" and reads NOTHING —
+// no localStorage, no URL query — so the finished list only exists
+// behind a real tab click). Text-match only, leaf elements only: this
+// runs in the user's logged-in session and must never press anything
+// but a filter tab.
+const MAX_CLICK_TEXT = 24;
+
+function sanitizeClick(click) {
+    if (typeof click !== 'string') return null;
+    const text = click.trim();
+    if (!text || text.length > MAX_CLICK_TEXT) return null;
+    return text;
+}
+
+function clickTabExpression(text) {
+    return `(() => {
+        const want = ${JSON.stringify(text)};
+        const els = document.querySelectorAll('a,button,[role="tab"],li,span,div,label');
+        for (const el of els) {
+            if (el.childElementCount === 0 && el.textContent.trim() === want) {
+                el.click();
+                return true;
+            }
+        }
+        return false;
+    })()`;
 }
 
 function storagePreScript(storage) {
@@ -121,6 +153,14 @@ export async function captureOrderViews(opts) {
                 idleMs,
                 hardTimeoutMs,
                 preScript: view.storage ? storagePreScript(view.storage) : undefined,
+                afterInitialIdle: view.click
+                    ? async (session) => {
+                        await session.send('Runtime.evaluate', {
+                            expression: clickTabExpression(view.click),
+                            returnByValue: true,
+                        });
+                    }
+                    : undefined,
             });
             let added = 0;
             // Smallest first: when the budget runs out, what gets dropped
