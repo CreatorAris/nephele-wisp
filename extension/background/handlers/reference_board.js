@@ -36,6 +36,9 @@ const SPINNER_IDLE_MS = 30_000;
 const DEFAULT_GRID_TIMEOUT_MS = 20_000;
 const ROUND_PAUSE_MS = 450;
 const EMIT_BATCH = 40;
+// The size cap alone makes the desktop counter jump +40 at a time; the age
+// cap keeps it ticking on slow boards. Whichever fills first flushes.
+const EMIT_MAX_AGE_MS = 500;
 // Backstops, not the exit condition. A board of 5000 pins is already past
 // anything a person curates by hand, and 20 minutes is longer than any real
 // board takes to walk — both exist so a bottomless feed (pinterest home) can
@@ -188,9 +191,11 @@ export async function harvestBoard(payload, emit) {
             let lastNewAt = Date.now();
             let stoppedBy = '';
 
+            let lastEmitAt = Date.now();
             const flush = (force) => {
                 if (!pending.length) return;
-                if (!force && pending.length < EMIT_BATCH) return;
+                if (!force && pending.length < EMIT_BATCH
+                    && Date.now() - lastEmitAt < EMIT_MAX_AGE_MS) return;
                 emit('reference.board_progress', {
                     harvest_id: harvestId,
                     items: pending,
@@ -198,6 +203,7 @@ export async function harvestBoard(payload, emit) {
                     board_title: boardTitle,
                 });
                 pending = [];
+                lastEmitAt = Date.now();
             };
 
             while (!stoppedBy) {
