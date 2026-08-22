@@ -228,6 +228,21 @@ function routeRequest(msg) {
             send(envelope('response', 'system.heartbeat', { result: { ok: true } }, msg.id));
             return;
 
+        case 'system.version':
+            // Reverse version check: the desktop asks the RUNNING worker what
+            // it actually is. getManifest() can lag reality (Edge caches the
+            // loaded-manifest snapshot across hot swaps — measured 2026-08-22:
+            // manifest said 0.5.0 while the worker ran build 0.5.10), so
+            // BUILD_SHA, stamped into the code itself at pack time, is the
+            // authoritative answer.
+            send(envelope('response', 'system.version', {
+                result: {
+                    version: chrome.runtime.getManifest().version,
+                    build_sha: BUILD_SHA,
+                },
+            }, msg.id));
+            return;
+
         case 'publisher.upload_draft':
             dispatchAsync(msg, handlePublisherUploadDraft);
             return;
