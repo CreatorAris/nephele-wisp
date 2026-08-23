@@ -7,8 +7,10 @@
  * flow because the handle is unknown until we are on the profile:
  *
  *   1. Open /home, click the sidebar Profile link (SPA nav discovers
- *      the user's own handle) → UserByScreenName + UserTweets fire.
- *   2. Direct-navigate to /<handle>/media → UserMedia (the works grid).
+ *      the user's own handle) → UserByScreenName + the posts timeline
+ *      (UserTweets, or UserOriginalsTimeline on redesign cohorts) fire.
+ *   2. Direct-navigate to /<handle>/media → the works grid (UserMedia,
+ *      or UserPhotoTimeline/UserVideoTimeline on redesign cohorts).
  *      X's router allows direct sub-route navigation, so no click
  *      dance is needed on the second pass.
  *
@@ -27,7 +29,13 @@
 import { captureDashboardXhrs } from './creator_common.js';
 
 const HOME_URL = 'https://x.com/home';
-const URL_INCLUDE = /\/i\/api\/graphql\/[^/]+\/(UserByScreenName|UserTweets|UserMedia)/;
+// 2026-07/08 profile redesign (responsive_web_profile_redesign_enabled)
+// renamed the timeline ops per rollout cohort: UserTweets →
+// UserOriginalsTimeline, UserMedia → UserPhotoTimeline + UserVideoTimeline.
+// Old names kept — the rollout is gradual and old-UI cohorts still fire them.
+// All of these are own-profile-only ops, so the filter stays narrow in the
+// sense that matters: nothing from other people's timelines can match.
+const URL_INCLUDE = /\/i\/api\/graphql\/[^/]+\/(UserByScreenName|UserTweets|UserMedia|UserOriginalsTimeline|UserPhotoTimeline|UserVideoTimeline)/;
 const LOGIN_RE = /(x|twitter)\.com\/(i\/flow\/login|login)/;
 
 function classifyXFinalUrl(finalUrl) {
