@@ -495,6 +495,152 @@ async function handleSystemEval(payload) {
         err.code = 'INVALID_PAYLOAD';
         throw err;
     }
+    // Dev-only SW-fetch bypass: expression = '//swfetch\n' + JSON spec
+    // {url, headers?, max_bytes?}. Runs fetch() in the SW (browser cookie
+    // jar via credentials:'include', immune to background-tab throttling).
+    // Recon tool for site API pagination — same trust level as eval.
+    if (expression.startsWith('//swfetch\n')) {
+        const spec = JSON.parse(expression.slice('//swfetch\n'.length));
+        const maxBytes = Math.min(200_000, Math.max(200, spec.max_bytes || 20_000));
+        const resp = await fetch(spec.url, {
+            credentials: 'include',
+            headers: spec.headers || {},
+        });
+        const text = await resp.text();
+        return {
+            tab_id: 0, tab_url: '(sw)', tab_title: '(sw)', tab_matches: 0,
+            value: {
+                status: resp.status,
+                content_type: resp.headers.get('content-type') || '',
+                bytes: text.length,
+                body: text.slice(0, maxBytes),
+            },
+        };
+    }
+    // Dev-only in-page fetch: expression = '//pagefetch\n' + JSON spec
+    // {page_url, fetch_url, headers?, max_bytes?}. Opens the page in a
+    // background tab, kicks fetch() in the page world (real cookies +
+    // Origin/Referer), then polls the result with pumpFrame between
+    // rounds so background-tab throttling cannot park the response.
+    // Mirrors the mechanics the API board walk will use in production.
+    if (expression.startsWith('//pagefetch\n')) {
+        const spec = JSON.parse(expression.slice('//pagefetch\n'.length));
+        const maxBytes = Math.min(200_000, Math.max(200, spec.max_bytes || 20_000));
+        return await withCdpTab(spec.page_url, async (session) => {
+            // Wait out the navigation: a fetch kicked into the initial
+            // about:blank context is wiped when the real document commits.
+            const wantHost = new URL(spec.page_url).host;
+            for (let i = 0; i < 60; i++) {
+                const ready = await session.evaluateFn(
+                    () => `${location.host}|${document.readyState}`,
+                ).catch(() => '');
+                if (ready.startsWith(wantHost) && !ready.endsWith('|loading')) break;
+                await session.pumpFrame().catch(() => {});
+                await new Promise((res) => setTimeout(res, 500));
+            }
+            await session.evaluateFn((fetchUrl, headers) => {
+                window.__nw_pf = { st: 'pending' };
+                fetch(fetchUrl, { credentials: 'include', headers: headers || {} })
+                    .then((r) => r.text().then((t) => {
+                        window.__nw_pf = {
+                            st: 'done',
+                            status: r.status,
+                            content_type: r.headers.get('content-type') || '',
+                            body: t,
+                        };
+                    }))
+                    .catch((e) => { window.__nw_pf = { st: 'err', msg: String(e) }; });
+            }, [spec.fetch_url, spec.headers || {}]);
+            for (let i = 0; i < 60; i++) {
+                await session.pumpFrame().catch(() => {});
+                await new Promise((res) => setTimeout(res, 500));
+                const out = await session.evaluateFn(() => window.__nw_pf);
+                if (out && out.st !== 'pending') {
+                    if (out.body) out.body = out.body.slice(0, maxBytes);
+                    return {
+                        tab_id: 0, tab_url: spec.page_url, tab_title: '(pagefetch)',
+                        tab_matches: 1, value: out,
+                    };
+                }
+            }
+            return {
+                tab_id: 0, tab_url: spec.page_url, tab_title: '(pagefetch)',
+                tab_matches: 1, value: { st: 'timeout' },
+            };
+        }, { keepTab: false, active: false });
+    }
+    // Dev-only request sniffer: expression = '//pagesniff\n' + JSON spec
+    // {page_url, match, rounds?}. Opens the page, monkeypatches fetch/XHR
+    // to record requests whose URL contains `match`, scrolls to trigger
+    // the page's own pagination, returns the recorded (url, headers).
+    if (expression.startsWith('//pagesniff\n')) {
+        const spec = JSON.parse(expression.slice('//pagesniff\n'.length));
+        const rounds = Math.min(30, Math.max(3, spec.rounds || 10));
+        return await withCdpTab(spec.page_url, async (session) => {
+            const wantHost = new URL(spec.page_url).host;
+            for (let i = 0; i < 60; i++) {
+                const ready = await session.evaluateFn(
+                    () => `${location.host}|${document.readyState}`,
+                ).catch(() => '');
+                if (ready.startsWith(wantHost) && !ready.endsWith('|loading')) break;
+                await session.pumpFrame().catch(() => {});
+                await new Promise((res) => setTimeout(res, 500));
+            }
+            await session.evaluateFn((match) => {
+                window.__nw_sniff = [];
+                const orig = window.fetch;
+                window.fetch = function (input, init) {
+                    try {
+                        const u = typeof input === 'string' ? input : (input && input.url) || '';
+                        if (u.includes(match)) {
+                            let hdrs = {};
+                            const h = (init && init.headers) || (input && input.headers);
+                            if (h && typeof h.forEach === 'function') {
+                                h.forEach((v, k) => { hdrs[k] = v; });
+                            } else if (h) { hdrs = { ...h }; }
+                            window.__nw_sniff.push({
+                                url: u,
+                                method: (init && init.method) || 'GET',
+                                headers: hdrs,
+                            });
+                        }
+                    } catch (_) { /* record best-effort */ }
+                    return orig.apply(this, arguments);
+                };
+                const origOpen = XMLHttpRequest.prototype.open;
+                const origSet = XMLHttpRequest.prototype.setRequestHeader;
+                const origSend = XMLHttpRequest.prototype.send;
+                XMLHttpRequest.prototype.open = function (m, u) {
+                    this.__nw = { url: String(u), method: m, headers: {} };
+                    return origOpen.apply(this, arguments);
+                };
+                XMLHttpRequest.prototype.setRequestHeader = function (k, v) {
+                    if (this.__nw) this.__nw.headers[k] = v;
+                    return origSet.apply(this, arguments);
+                };
+                XMLHttpRequest.prototype.send = function () {
+                    if (this.__nw && this.__nw.url.includes(match)) {
+                        window.__nw_sniff.push(this.__nw);
+                    }
+                    return origSend.apply(this, arguments);
+                };
+            }, [String(spec.match || '/resource/')]);
+            for (let i = 0; i < rounds; i++) {
+                await session.evaluateFn(() => {
+                    window.scrollBy(0, window.innerHeight * 0.8);
+                }).catch(() => {});
+                await session.pumpFrame().catch(() => {});
+                await new Promise((res) => setTimeout(res, 700));
+            }
+            const got = await session.evaluateFn(
+                () => JSON.stringify((window.__nw_sniff || []).slice(0, 8)),
+            ).catch(() => '[]');
+            return {
+                tab_id: 0, tab_url: spec.page_url, tab_title: '(pagesniff)',
+                tab_matches: 1, value: { requests: got },
+            };
+        }, { keepTab: false, active: false });
+    }
     const urlPattern = payload.url_pattern || null;
     const awaitPromise = Boolean(payload.await_promise);
     const returnByValue = payload.return_by_value !== false;

@@ -45,6 +45,12 @@ const EMIT_MAX_AGE_MS = 500;
 // not spin forever if it is ever pointed at one.
 const HARD_CEILING = 5000;
 const MAX_RUN_MS = 20 * 60_000;
+// API cursor walk: ~100x the scroll walk's throughput and immune to
+// background-tab throttling, so the default ceiling can afford to cover
+// the "tens of thousands of pins" boards users actually curate.
+const API_CEILING = 20_000;
+const API_PAGE_FETCH_TIMEOUT_MS = 30_000;
+const API_PAGE_PAUSE_MS = 250;
 
 // Harvests the desktop has asked to stop. Keyed by harvest_id, which the
 // desktop generates; a stop for an unknown id is remembered for a short while
@@ -131,6 +137,228 @@ function pageCollect(imageSel, linkSel, boxSel, excludeSel, ignoreAlt) {
     return out;
 }
 
+/*
+ * ---- API cursor walk ----------------------------------------------------
+ *
+ * When the desktop rule carries `api: {kind, page_size?, ceiling?}`, the
+ * harvest walks the site's own paginated feed API instead of scrolling the
+ * grid: the board tab is still opened (cookies, Origin/Referer, and the
+ * page world the fetch runs in), but items come from cursor-paginated JSON,
+ * so virtualized-grid unmounting, background-tab rAF throttling, and the
+ * scroll walk's wall-clock ceiling stop mattering. Verified 2026-08-23
+ * against live sites: huaban /v3 max-cursor walks a 5470-pin board in 52s;
+ * Pinterest BoardFeedResource bookmark-walks 1847 pins with no cap.
+ *
+ * The fetch itself is kicked into the page and POLLED via short sync
+ * evaluates with a frame pump between rounds. A fresh background tab
+ * resolves awaited fetches fine (evaluateAsyncFn's doc, and the short
+ * reference_pinterest.js API loop, are both correct for that regime) —
+ * but this walk is the one Wisp path meant to run PAST Chrome's
+ * ~5-minute intensive-throttling threshold, and on an intensively
+ * throttled tab a kicked fetch was measured staying pending
+ * indefinitely (2026-08-23, hours-old background tab: >30s pending,
+ * setTimeout races never fired). An in-flight awaited evaluate has no
+ * rescue once the renderer parks; SW-side polling with a BeginFrame
+ * pump per round keeps pages resolving past the threshold. Parsing
+ * happens in-page too: only compact item rows cross CDP and the NMH
+ * socket, never raw feed JSON.
+ *
+ * Any bootstrap or page failure falls back to the scroll walk — the API
+ * shapes are living targets and the DOM path is the one that only needs
+ * the site to render at all.
+ */
+
+/* Runs IN PAGE (self-contained). Fetches one feed page, parses it by
+ * `kind`, leaves {st, items, cursor, done} (or {st:'err'}) on window[slot]
+ * for the poller. `pinterest_board_resource` is the bootstrap lookup: it
+ * resolves the numeric board id instead of items. */
+function pageApiFetch(slot, url, headers, kind) {
+    window[slot] = { st: 'pending' };
+    fetch(url, { credentials: 'include', headers: headers || {} })
+        .then((r) => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        })
+        .then((j) => {
+            const out = { st: 'done', items: [], cursor: '', done: false };
+            if (kind === 'huaban_v3') {
+                const pins = (j && j.pins) || [];
+                for (const p of pins) {
+                    const f = p.file || {};
+                    const src = f.url || (f.key ? 'https://gd-hbimg.huaban.com/' + f.key : '');
+                    if (!src || !p.pin_id) continue;
+                    out.items.push({
+                        url: src,
+                        page_url: 'https://huaban.com/pins/' + p.pin_id,
+                        pin_id: String(p.pin_id),
+                        alt: String(p.raw_text || '').trim().slice(0, 120),
+                        width: f.width || 0,
+                        height: f.height || 0,
+                    });
+                }
+                // Cursor from the RAW pins array (the API's pagination
+                // boundary), not the filtered items; a trailing pin with no
+                // id would otherwise page with max=undefined — treat that
+                // as the end instead.
+                const lastId = pins.length ? pins[pins.length - 1].pin_id : '';
+                out.cursor = lastId ? String(lastId) : '';
+                out.done = !pins.length || !out.cursor;
+            } else if (kind === 'pinterest_board_feed') {
+                const rr = (j && j.resource_response) || {};
+                const data = Array.isArray(rr.data) ? rr.data : [];
+                for (const it of data) {
+                    const orig = it && it.images && it.images.orig;
+                    if (!orig || !orig.url || !it.id) continue;
+                    out.items.push({
+                        url: orig.url,
+                        page_url: 'https://www.pinterest.com/pin/' + it.id + '/',
+                        pin_id: String(it.id),
+                        alt: String(it.grid_title || it.description || '').trim().slice(0, 120),
+                        width: orig.width || 0,
+                        height: orig.height || 0,
+                    });
+                }
+                const bm = rr.bookmark && rr.bookmark !== '-end-' ? String(rr.bookmark) : '';
+                out.cursor = bm;
+                out.done = !data.length || !bm;
+            } else if (kind === 'pinterest_board_resource') {
+                const node = j && j.resource_response && j.resource_response.data
+                    && j.resource_response.data.node_id;
+                if (!node) throw new Error('BoardResource: no node_id');
+                const decoded = atob(String(node));           // "Board:<id>"
+                out.board_id = decoded.split(':')[1] || '';
+                if (!out.board_id) throw new Error('BoardResource: bad node_id ' + decoded);
+                out.done = true;
+            } else {
+                throw new Error('unknown api kind: ' + kind);
+            }
+            window[slot] = out;
+        })
+        .catch((e) => { window[slot] = { st: 'err', msg: String((e && e.message) || e) }; });
+}
+
+/* CDP sends have no timeout of their own, and a tab parked by the
+ * browser's memory saver / tab discard never runs its callbacks — an
+ * unguarded await there hangs the whole harvest forever (observed
+ * 2026-08-23 as intermittent walk stalls under heavy browser use).
+ * Errors carry .stuck so the caller knows the TAB is dead, not the API:
+ * falling back to the scroll walk on the same tab would hang the same
+ * way, so stuck errors must fail the harvest instead. */
+function _withCdpTimeout(tag, ms, promise) {
+    return Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => {
+            const err = new Error(`CDP_STUCK: ${tag} did not return in ${ms}ms`);
+            err.stuck = true;
+            reject(err);
+        }, ms)),
+    ]);
+}
+const CDP_OP_TIMEOUT_MS = 15_000;
+
+/* Kick one in-page API fetch and poll it out. Throws on page error or
+ * timeout — callers treat a non-stuck throw as "fall back to the scroll
+ * walk" and a .stuck throw as "the tab is gone, stop the harvest". */
+async function _fetchApiPage(session, url, headers, kind) {
+    const slot = '__nw_api_' + Math.floor(Math.random() * 1e9);
+    await _withCdpTimeout('api kick', CDP_OP_TIMEOUT_MS,
+        session.evaluateFn(pageApiFetch, [slot, url, headers, kind]));
+    const deadline = Date.now() + API_PAGE_FETCH_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+        await _withCdpTimeout('api pump', CDP_OP_TIMEOUT_MS,
+            session.pumpFrame()).catch((e) => { if (e && e.stuck) throw e; });
+        await sleep(300);
+        const out = await _withCdpTimeout('api poll', CDP_OP_TIMEOUT_MS,
+            session.evaluateFn((s) => {
+                const v = window[s];
+                if (v && v.st !== 'pending') { try { delete window[s]; } catch (_) { /* keep */ } }
+                return v && v.st !== 'pending' ? v : null;
+            }, [slot]));
+        if (out && out.st === 'done') return out;
+        if (out && out.st === 'err') throw new Error(`api page: ${out.msg}`);
+    }
+    throw new Error('api page: fetch timed out');
+}
+
+/* Walks the feed API to the board's end. `sink(items)` de-dupes/emits and
+ * returns false once the cap is hit. Returns the stop reason; throws to
+ * request fallback to the scroll walk. */
+async function apiWalk(session, rules, startUrl, { sink, isCancelled, deadlineAt }) {
+    const kind = rules.api.kind;
+    const pageSize = Math.min(200, Math.max(20, parseInt(rules.api.page_size, 10) || 100));
+    const origin = new URL(startUrl).origin;
+
+    let buildUrl;
+    let headers;
+    if (kind === 'huaban_v3') {
+        const m = new URL(startUrl).pathname.match(/^\/boards\/(\d+)/);
+        if (!m) throw new Error('api: not a huaban board url');
+        const boardId = m[1];
+        headers = { Accept: 'application/json' };
+        buildUrl = (cursor) => `${origin}/v3/boards/${boardId}/pins?limit=${pageSize}`
+            + (cursor ? `&max=${cursor}` : '');
+    } else if (kind === 'pinterest_board_feed') {
+        const segs = new URL(startUrl).pathname.split('/').filter(Boolean);
+        if (segs.length < 2) throw new Error('api: not a pinterest board url');
+        const sourceUrl = `/${segs[0]}/${segs[1]}/`;
+        // The PWS front rejects bare XHRs; the recipe below matches what the
+        // page's own client sends (sniffed 2026-08-23). appVersion comes from
+        // the page HTML and changes per deploy — omitting it 403s.
+        const appVersion = await _withCdpTimeout('app version', CDP_OP_TIMEOUT_MS,
+            session.evaluateFn(() => {
+                const m2 = document.documentElement.outerHTML
+                    .match(/"appVersion"\s*:\s*"([0-9a-f]{6,})"/);
+                return (m2 && m2[1]) || '';
+            }));
+        headers = {
+            Accept: 'application/json, text/javascript, */*, q=0.01',
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-Pinterest-AppState': 'active',
+            'X-Pinterest-Source-Url': sourceUrl,
+            'X-Pinterest-PWS-Handler': 'www/[username]/[slug].js',
+        };
+        if (appVersion) headers['X-APP-VERSION'] = appVersion;
+        const brData = JSON.stringify({
+            options: { username: segs[0], slug: segs[1], field_set_key: 'detailed' },
+            context: {},
+        });
+        const brUrl = `${origin}/resource/BoardResource/get/?source_url=`
+            + `${encodeURIComponent(sourceUrl)}&data=${encodeURIComponent(brData)}`;
+        const br = await _fetchApiPage(session, brUrl, headers, 'pinterest_board_resource');
+        const boardId = br.board_id;
+        buildUrl = (cursor) => {
+            const options = {
+                board_id: boardId,
+                board_url: sourceUrl,
+                currentFilter: -1,
+                field_set_key: 'react_grid_pin',
+                filter_section_pins: true,
+                sort: 'default',
+                layout: 'default',
+                page_size: pageSize,
+                redux_normalize_feed: true,
+            };
+            if (cursor) options.bookmarks = [cursor];
+            const data = JSON.stringify({ options, context: {} });
+            return `${origin}/resource/BoardFeedResource/get/?source_url=`
+                + `${encodeURIComponent(sourceUrl)}&data=${encodeURIComponent(data)}`;
+        };
+    } else {
+        throw new Error(`api: unknown kind ${kind}`);
+    }
+
+    let cursor = '';
+    while (true) {
+        if (isCancelled()) return 'cancelled';
+        if (Date.now() > deadlineAt) return 'time_limit';
+        const page = await _fetchApiPage(session, buildUrl(cursor), headers, kind);
+        if (page.items.length && !sink(page.items)) return 'max_items';
+        if (page.done) return 'api_end';
+        cursor = page.cursor;
+        await sleep(API_PAGE_PAUSE_MS + Math.floor(Math.random() * 150));
+    }
+}
+
 /**
  * @param {Object} payload
  * @param {string} payload.url            Board URL (required).
@@ -149,7 +377,8 @@ export async function harvestBoard(payload, emit) {
         err.code = 'INVALID_PAYLOAD';
         throw err;
     }
-    const maxItems = Math.max(0, parseInt(payload?.max_items, 10) || 0) || HARD_CEILING;
+    const rawMax = Math.max(0, parseInt(payload?.max_items, 10) || 0);
+    const maxItems = rawMax || HARD_CEILING;
     const idleMs = Math.max(3_000, parseInt(payload?.idle_ms, 10) || DEFAULT_IDLE_MS);
 
     _active.add(harvestId);
@@ -205,6 +434,54 @@ export async function harvestBoard(payload, emit) {
                 pending = [];
                 lastEmitAt = Date.now();
             };
+
+            // API cursor walk first when the rule offers one; the scroll
+            // walk below is the fallback for bootstrap/page failures.
+            if (rules.api && rules.api.kind) {
+                const apiMax = rawMax
+                    || Math.max(0, parseInt(rules.api.ceiling, 10) || 0)
+                    || API_CEILING;
+                const sink = (items) => {
+                    for (const item of items) {
+                        const key = item.pin_id || item.url;
+                        if (seen.has(key)) continue;
+                        seen.add(key);
+                        total += 1;
+                        pending.push(item);
+                        if (total >= apiMax) { flush(true); return false; }
+                    }
+                    flush(false);
+                    return true;
+                };
+                try {
+                    const apiStop = await apiWalk(session, rules, startUrl, {
+                        sink,
+                        isCancelled: () => _cancelled.has(harvestId),
+                        deadlineAt: startedAt + MAX_RUN_MS,
+                    });
+                    flush(true);
+                    return {
+                        harvest_id: harvestId,
+                        board_title: boardTitle,
+                        final_url: await session.getUrl().catch(() => startUrl),
+                        total,
+                        stopped_by: apiStop === 'max_items' && !rawMax ? 'ceiling' : apiStop,
+                    };
+                } catch (e) {
+                    if (e && e.stuck) {
+                        // The tab itself stopped answering CDP (memory-saver
+                        // park / discard). The scroll walk would hang on the
+                        // same dead tab, so fail the harvest cleanly — the
+                        // desktop keeps everything already emitted.
+                        const err = new Error(`TAB_STALLED: ${e.message}`);
+                        err.code = 'TAB_STALLED';
+                        throw err;
+                    }
+                    console.warn('[board] api walk failed, falling back to scroll:', e.message);
+                    // Partial API items stay in `seen`/`total` and were already
+                    // emitted; the scroll walk below only adds unseen pins.
+                }
+            }
 
             while (!stoppedBy) {
                 if (_cancelled.has(harvestId)) { stoppedBy = 'cancelled'; break; }
