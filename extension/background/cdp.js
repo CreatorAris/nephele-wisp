@@ -741,8 +741,16 @@ export async function sweepOrphanTabs() {
     }
 }
 
-export async function withCdpTab(initialUrl, fn, { keepTab = false, active = false } = {}) {
-    const tab = await createTabEnsuringWindow(initialUrl, active);
+// `blankFirst` opens the tab on about:blank and leaves navigation to the
+// caller. Callers that observe the page load (CDP Network/Page events) need
+// this: a tab created straight on the target is already fetching before the
+// debugger attaches, so whether an event is seen becomes a coin flip — the
+// resource extractor measured the same page settling at 2.0s or 3.7s run to
+// run depending on which side of the race it landed.
+export async function withCdpTab(initialUrl, fn, { keepTab = false, active = false, blankFirst = false, reuseTabId = null, owned = false } = {}) {
+    const tab = reuseTabId === null
+        ? await createTabEnsuringWindow(blankFirst ? 'about:blank' : initialUrl, active)
+        : await chrome.tabs.get(reuseTabId);
     try { await _ledgerAdd(tab.id, initialUrl); } catch (_) { /* ledger is best-effort */ }
     const session = new CdpSession(tab.id);
     try {
@@ -768,7 +776,9 @@ export async function withCdpTab(initialUrl, fn, { keepTab = false, active = fal
         }
         // keepTab tabs are intentional (publisher drafts) — either way
         // this tab is no longer ours to sweep.
-        try { await _ledgerRemove(tab.id); } catch (_) { /* noop */ }
+        if (!keepTab || !owned) {
+            try { await _ledgerRemove(tab.id); } catch (_) { /* noop */ }
+        }
     }
 }
 
@@ -784,4 +794,9 @@ export function classifyCdpError(err) {
     if (msg.includes('attach')) return 'INTERNAL';  // debugger attach failure
     if (msg.toLowerCase().includes('captcha')) return 'CAPTCHA_REQUIRED';
     return 'INTERNAL';
+}
+
+export async function closeOwnedCdpTab(tabId) {
+    try { await chrome.tabs.remove(tabId); } catch (_) {}
+    try { await _ledgerRemove(tabId); } catch (_) {}
 }

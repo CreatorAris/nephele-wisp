@@ -35,6 +35,7 @@ import { fetchPinterestReferences } from './handlers/reference_pinterest.js';
 import { fetchArtstationReferences } from './handlers/reference_artstation.js';
 import { fetchHuabanReferences } from './handlers/reference_huaban.js';
 import { extractPageResources, fetchFullImages } from './handlers/reference_resources.js';
+import { closeAllReferenceSessions } from './handlers/reference_sessions.js';
 import { harvestBoard, stopBoardHarvest } from './handlers/reference_board.js';
 import { readPage, interactPage } from './handlers/browser_read.js';
 import { capturePage } from './handlers/browser_capture.js';
@@ -715,6 +716,7 @@ function handleEvent(msg) {
             // Self-initiated port.disconnect() does NOT reliably fire
             // our own onDisconnect — do its cleanup inline.
             log('UI shutdown event:', msg.payload?.reason ?? '(no reason)');
+            closeAllReferenceSessions().catch(() => { /* best-effort */ });
             connected = false;
             sessionToken = null;
             nepheleVersion = null;
@@ -851,13 +853,33 @@ async function connect() {
     port.onMessage.addListener(handleIncoming);
     port.onDisconnect.addListener(() => {
         const err = chrome.runtime.lastError;
-        log('disconnected:', err?.message ?? '(clean)');
+        if (err?.message) {
+            // console.error, not log: an abnormal disconnect reason
+            // ("Failed to start native messaging host", framing errors)
+            // must land on the edge://extensions Errors page — the one
+            // surface a non-technical user can screenshot. Field case
+            // 2026-08-24: the real cause lived in log() while the errors
+            // page showed only downstream timeouts, costing a week of
+            // guesswork.
+            error('disconnected:', err.message);
+        } else {
+            log('disconnected: (clean)');
+        }
         port = null;
         connected = false;
         sessionToken = null;
         nepheleVersion = null;
         heartbeatFailures = 0;
         handshakeStalledTicks = 0;
+        // Fail pending requests NOW with the real cause instead of letting
+        // them sit until their timers fire — "timeout: system.hello" was
+        // the misleading face of every pre-handshake launch failure. The
+        // stored callback clears its own timeout before settling.
+        const cause = err?.message ?? 'native port disconnected';
+        for (const cb of pendingResponses.values()) {
+            cb({ payload: { error: { message: `port disconnected: ${cause}`, code: 'PORT_DISCONNECTED' } } });
+        }
+        pendingResponses.clear();
         // Intentionally NOT calling stopHeartbeat() here. The alarm is now
         // the only event source guaranteed to fire after MV3 suspends the
         // SW — clearing it would orphan the extension if the SW is recycled

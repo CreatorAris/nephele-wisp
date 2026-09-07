@@ -42,10 +42,10 @@ function _upgradeThumb(url) {
     );
 }
 
-async function _searchGet(query, maxItems) {
+async function _searchGet(query, maxItems, page) {
     const params = new URLSearchParams({
         query,
-        page: '1',
+        page: String(page),
         per_page: String(maxItems),
         sorting: 'relevance',
         pro_first: '1',
@@ -77,7 +77,7 @@ export async function fetchArtstationReferences(payload) {
 
     let resp;
     try {
-        resp = await _searchGet(query, maxItems);
+        resp = await _searchGet(query, maxItems, Math.max(1, Number(payload?.continuation?.page) || 1));
     } catch (e) {
         if (e?.name === 'AbortError') {
             const err = new Error(`TIMEOUT: search timed out after ${FETCH_TIMEOUT_MS}ms`);
@@ -90,8 +90,8 @@ export async function fetchArtstationReferences(payload) {
     }
 
     if (resp.status === 401 || resp.status === 403) {
-        const err = new Error(`AUTH_REQUIRED: ArtStation ${resp.status}`);
-        err.code = 'AUTH_REQUIRED';
+        const err = new Error(`${resp.status === 401 ? "AUTH_REQUIRED" : "SITE_BLOCKED"}: ArtStation ${resp.status}`);
+        err.code = resp.status === 401 ? 'AUTH_REQUIRED' : 'SITE_BLOCKED';
         err.data = { status: resp.status };
         throw err;
     }
@@ -138,6 +138,8 @@ export async function fetchArtstationReferences(payload) {
 
     return {
         items,
+        continuation: { page: (Number(payload?.continuation?.page) || 1) + 1 },
+        has_more: data.length >= maxItems,
         total: json?.total_count ?? items.length,
         final_url: SEARCH_API_URL,
         query,
