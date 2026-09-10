@@ -20,10 +20,15 @@ const URL_INCLUDE = /^https?:\/\/([^/]*\.)?mihuashi\.com\/api\//i;
 const LOGIN_RE = /mihuashi\.com\/(login|signin|passport)/i;
 const CAPTCHA_RE = /(captcha|verify|punish)/i;
 
-// Starting points only. The order list route is confirmed by the first
-// recon run against a real account and then shipped from the desktop.
+// Confirmed 2026-09-10 against a live painter account. Each dashboard
+// list reads its filter from the route query; the desktop normally ships
+// these (core/orders/sync.py DEFAULT_VIEWS) and only older desktops fall
+// back here.
 const FALLBACK_VIEWS = [
-    { url: 'https://www.mihuashi.com/', label: 'root' },
+    { url: 'https://www.mihuashi.com/dashboard/purchases?type=running', label: 'stall-running' },
+    { url: 'https://www.mihuashi.com/dashboard/purchases?type=finished', label: 'stall-finished' },
+    { url: 'https://www.mihuashi.com/dashboard/purchases?type=interrupted', label: 'stall-interrupted' },
+    { url: 'https://www.mihuashi.com/dashboard/projects?type=all', label: 'hires' },
 ];
 
 // mihuashi's success envelope uses code 0 / absent; 401 is the observed

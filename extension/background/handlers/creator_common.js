@@ -49,6 +49,13 @@ const DEFAULT_HARD_TIMEOUT_MS = 30000;
  *     localStorage during component init — by the time we could evaluate
  *     into a loaded page, the XHRs we wanted to influence already fired.
  *     Implies a blank-first tab so the registration beats the navigation.
+ * @param {boolean}  [opts.blankFirst]  open about:blank, attach, enable the
+ *     Network domain, THEN navigate. Without it the tab is created on the
+ *     target URL and Network.enable races the page: a warm SPA (bundle
+ *     cached, second view of a sweep) fires and finishes its list XHRs
+ *     before we are listening, and the capture comes back empty
+ *     (measured 2026-09-10 on mihuashi: views 2-4 of a sweep captured 0
+ *     endpoints every time, view 1 only sometimes).
  * @returns {Promise<{captured: Object, finalUrl: string}>}
  */
 export async function captureDashboardXhrs(opts) {
@@ -62,13 +69,17 @@ export async function captureDashboardXhrs(opts) {
         classifyFinalUrl,
         afterInitialIdle,
         preScript,
+        blankFirst = false,
     } = opts;
+    const deferNavigation = blankFirst || !!preScript;
 
     return await withCdpTab(dashboardUrl, async (session, _tab) => {
         await session.send('Network.enable');
         if (preScript) {
             await session.send('Page.enable');
             await session.send('Page.addScriptToEvaluateOnNewDocument', { source: preScript });
+        }
+        if (deferNavigation) {
             await session.send('Page.navigate', { url: dashboardUrl });
         }
 
@@ -163,5 +174,5 @@ export async function captureDashboardXhrs(opts) {
         if (classifyFinalUrl) classifyFinalUrl(finalUrl);
 
         return { captured, finalUrl };
-    }, { blankFirst: !!preScript });
+    }, { blankFirst: deferNavigation });
 }

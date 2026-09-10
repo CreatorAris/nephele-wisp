@@ -152,6 +152,10 @@ export async function captureOrderViews(opts) {
                 classifyFinalUrl,
                 idleMs,
                 hardTimeoutMs,
+                // Every order view navigates AFTER Network.enable: the
+                // second and later views of a sweep hit a warm SPA whose
+                // list XHRs finish before a same-URL tab is even attached.
+                blankFirst: true,
                 preScript: view.storage ? storagePreScript(view.storage) : undefined,
                 afterInitialIdle: view.click
                     ? async (session) => {
