@@ -52,6 +52,9 @@ export function resolveViews(supplied, fallback, hostRegex) {
             label: (typeof entry === 'object' && entry && entry.label) || '',
             storage: sanitizeStorage(typeof entry === 'object' && entry && entry.storage),
             click: sanitizeClick(typeof entry === 'object' && entry && entry.click),
+            // Infinite-scroll lists are walked to their end unless the
+            // desktop opts a view out (a page that is not a list).
+            paginate: !(typeof entry === 'object' && entry && entry.paginate === false),
         });
         if (views.length >= MAX_VIEWS) break;
     }
@@ -145,13 +148,14 @@ export async function captureOrderViews(opts) {
 
     for (const view of views) {
         try {
-            const { captured, finalUrl } = await captureDashboardXhrs({
+            const { captured, finalUrl, pages } = await captureDashboardXhrs({
                 dashboardUrl: view.url,
                 urlIncludeRegex,
                 classifyResponse,
                 classifyFinalUrl,
                 idleMs,
                 hardTimeoutMs,
+                paginate: view.paginate !== false,
                 // Every order view navigates AFTER Network.enable: the
                 // second and later views of a sweep hit a warm SPA whose
                 // list XHRs finish before a same-URL tab is even attached.
@@ -196,6 +200,7 @@ export async function captureOrderViews(opts) {
                 ok: true,
                 endpoints: Object.keys(captured).length,
                 new_endpoints: added,
+                pages: pages || 1,
                 final_url: finalUrl,
             });
         } catch (e) {

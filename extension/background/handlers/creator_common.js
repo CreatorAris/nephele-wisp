@@ -22,6 +22,32 @@ import { withCdpTab } from '../cdp.js';
 const DEFAULT_IDLE_MS = 2500;
 const DEFAULT_HARD_TIMEOUT_MS = 30000;
 
+// Infinite-scroll lists only fetch page 2+ when the user scrolls near the
+// bottom (米画师 InfiniteScrollLoader: distance 600px, element-ui
+// v-infinite-scroll on the nearest scrollable ancestor, measured
+// 2026-09-22). One round = scroll every scroll container to its end,
+// give the page's throttled scroll handler time to START a request (a
+// background tab's timers run at 1 Hz, so this is generous), then let
+// the responses settle. A scroll that provokes no request means the list
+// is exhausted (page >= pageCount disables the directive) or was never
+// paginated. The round cap and time budget keep a runaway feed from
+// eating the whole sweep.
+const DEFAULT_PAGINATE_ROUNDS = 60;
+const DEFAULT_PAGINATE_TRIGGER_MS = 2500;
+const DEFAULT_PAGINATE_IDLE_MS = 1200;
+const DEFAULT_PAGINATE_BUDGET_MS = 60000;
+
+const SCROLL_TO_END_EXPRESSION = `(() => {
+    const targets = [document.scrollingElement || document.documentElement];
+    for (const el of document.querySelectorAll('*')) {
+        const style = getComputedStyle(el);
+        if (/(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 1) targets.push(el);
+    }
+    for (const el of targets) el.scrollTop = el.scrollHeight;
+    window.scrollTo(0, document.documentElement.scrollHeight);
+    return targets.length;
+})()`;
+
 /**
  * Open `dashboardUrl` in a background tab, capture JSON XHR bodies
  * that match `urlIncludeRegex`, return when the XHR storm settles.
@@ -70,6 +96,7 @@ export async function captureDashboardXhrs(opts) {
         afterInitialIdle,
         preScript,
         blankFirst = false,
+        paginate = false,
     } = opts;
     const deferNavigation = blankFirst || !!preScript;
 
@@ -85,12 +112,31 @@ export async function captureDashboardXhrs(opts) {
 
         const captured = {};
         const pendingBodies = new Map();
+        const pendingRequests = new Set();
         const bodyFetches = [];
         let lastResponseAt = Date.now();
         let earlyError = null;
+        let requestCount = 0;
+        let finishedCount = 0;
+        let extraPages = 0;
 
         const onEvent = (src, method, params) => {
             if (src.tabId !== session.tabId) return;
+
+            if (method === 'Network.requestWillBeSent') {
+                const url = (params.request && params.request.url) || '';
+                if (urlIncludeRegex.test(url)) {
+                    requestCount += 1;
+                    pendingRequests.add(params.requestId);
+                }
+                return;
+            }
+
+            if (method === 'Network.loadingFailed') {
+                if (pendingRequests.delete(params.requestId)) lastResponseAt = Date.now();
+                pendingBodies.delete(params.requestId);
+                return;
+            }
 
             if (method === 'Network.responseReceived') {
                 const resp = params.response || {};
@@ -103,10 +149,12 @@ export async function captureDashboardXhrs(opts) {
             }
 
             if (method === 'Network.loadingFinished') {
+                if (pendingRequests.delete(params.requestId)) lastResponseAt = Date.now();
                 const meta = pendingBodies.get(params.requestId);
                 if (!meta) return;
                 pendingBodies.delete(params.requestId);
                 lastResponseAt = Date.now();
+                finishedCount += 1;
 
                 const p = session.send('Network.getResponseBody', {
                     requestId: params.requestId,
@@ -134,13 +182,46 @@ export async function captureDashboardXhrs(opts) {
             }
         };
 
-        const waitIdle = async () => {
+        const waitIdle = async (quietMs = idleMs) => {
             const start = Date.now();
             while (Date.now() - start < hardTimeoutMs) {
                 if (earlyError) break;
-                if (Date.now() - lastResponseAt > idleMs) break;
+                if (pendingRequests.size === 0 && Date.now() - lastResponseAt > quietMs) break;
                 await sleep(250);
             }
+        };
+
+        // Returns how many extra pages the scrolling provoked.
+        const scrollThroughPages = async () => {
+            const cfg = paginate && typeof paginate === 'object' ? paginate : {};
+            const maxRounds = cfg.maxRounds || DEFAULT_PAGINATE_ROUNDS;
+            const triggerMs = cfg.triggerMs || DEFAULT_PAGINATE_TRIGGER_MS;
+            const quietMs = cfg.idleMs || DEFAULT_PAGINATE_IDLE_MS;
+            const deadline = Date.now() + (cfg.budgetMs || DEFAULT_PAGINATE_BUDGET_MS);
+            let rounds = 0;
+            while (rounds < maxRounds && Date.now() < deadline && !earlyError) {
+                const requestsBefore = requestCount;
+                const finishedBefore = finishedCount;
+                try {
+                    await session.send('Runtime.evaluate', {
+                        expression: SCROLL_TO_END_EXPRESSION,
+                        returnByValue: true,
+                    });
+                } catch (e) {
+                    console.warn('[creator_common] scroll-to-end failed:', e && e.message);
+                    break;
+                }
+                const scrolledAt = Date.now();
+                while (Date.now() - scrolledAt < triggerMs && requestCount === requestsBefore && !earlyError) {
+                    await sleep(100);
+                }
+                if (requestCount === requestsBefore) break;
+                lastResponseAt = Date.now();
+                await waitIdle(quietMs);
+                if (finishedCount === finishedBefore) break;
+                rounds += 1;
+            }
+            return rounds;
         };
 
         chrome.debugger.onEvent.addListener(onEvent);
@@ -163,6 +244,9 @@ export async function captureDashboardXhrs(opts) {
                     await waitIdle();
                 }
             }
+            if (paginate && !earlyError) {
+                extraPages = await scrollThroughPages();
+            }
             await Promise.allSettled(bodyFetches);
         } finally {
             try { chrome.debugger.onEvent.removeListener(onEvent); } catch (_) { /* noop */ }
@@ -173,6 +257,6 @@ export async function captureDashboardXhrs(opts) {
         const finalUrl = await session.getUrl();
         if (classifyFinalUrl) classifyFinalUrl(finalUrl);
 
-        return { captured, finalUrl };
+        return { captured, finalUrl, pages: 1 + extraPages };
     }, { blankFirst: deferNavigation });
 }
